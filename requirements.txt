@@ -18,5 +18,4 @@ bcrypt
 uploadfiles
 pdfminer.six
 python-docx
-
-
+pymupdf

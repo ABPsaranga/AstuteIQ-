@@ -1,17 +1,17 @@
 from sqlalchemy.orm import Session
-from app.models.user import User
+from app.models.user_profile import UserProfile
 
 def get_or_create_user(db: Session, payload: dict):
     supabase_id = payload.get("sub")
     email = payload.get("email")
 
-    user = db.query(User).filter(User.supabase_id == supabase_id).first()
+    user = db.query(UserProfile).filter(UserProfile.supabase_id == supabase_id).first()
 
     if user:
         return user
 
     # create new user
-    user = User(
+    user = UserProfile(
         supabase_id=supabase_id,
         email=email,
     )

@@ -1,13 +1,10 @@
 from pydantic import BaseModel, EmailStr, Field
-from datetime import datetime
-from typing import Optional
-from app.core.config import settings
-from app.core.security import get_password_hash, verify_password
 
 class RegisterRequest(BaseModel):
     full_name: str
     email: EmailStr
     password: str = Field(min_length=8)
+    role: str
     practice_name: str
 
 class LoginRequest(BaseModel):

@@ -1,20 +1,25 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
+import uuid
+from datetime import datetime, timedelta
+from app.models.refresh_token import RefreshToken
 
 from app.db.session import SessionLocal
-from app.models.user import User
+from app.models.user_profile import UserProfile
 from app.core.security import (
+    create_access_token,
+    create_refresh_token,
+    hash_password,
     verify_password,
-    create_access_token
 )
-from app.services.google_auth import verify_google_token
+from app.api.deps import get_current_user
 
-router = APIRouter(prefix="/auth", tags=["auth"])
+router = APIRouter(prefix="/auth", tags=["Auth"])
 
 
-# ================= DB DEP =================
-
+# ================= DB =================
 def get_db():
     db = SessionLocal()
     try:
@@ -24,77 +29,98 @@ def get_db():
 
 
 # ================= SCHEMAS =================
+class RegisterRequest(BaseModel):
+    email: str
+    password: str
+    role: str
+    name: str 
+
 
 class LoginRequest(BaseModel):
     email: str
     password: str
 
 
-class GoogleRequest(BaseModel):
-    token: str  # Google ID token
+# ================= REGISTER =================
+@router.post("/register")
+def register(data: RegisterRequest, db: Session = Depends(get_db)):
 
+    existing = db.query(UserProfile).filter(
+        UserProfile.email == data.email
+    ).first()
 
-# ================= EMAIL LOGIN =================
+    if existing:
+        raise HTTPException(status_code=400, detail="User already exists")
 
-@router.post("/login")
-def login(data: LoginRequest, db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.email == data.email).first()
+    user = UserProfile(
+        id=str(uuid.uuid4()),
+        email=data.email,
+        password=hash_password(data.password),
+        role=data.role,
+    )
 
-    if not user:
-        raise HTTPException(status_code=401, detail="Invalid email")
-
-    if not verify_password(data.password, user.hashed_password):
-        raise HTTPException(status_code=401, detail="Invalid password")
-
-    token = create_access_token({
-        "sub": str(user.id),
-        "role": user.role
-    })
+    db.add(user)
+    db.commit()
+    db.refresh(user)
 
     return {
-        "access_token": token,
-        "token_type": "bearer",
-        "role": user.role
+        "id": user.id,
+        "email": user.email,
+        "role": user.role,
     }
 
 
-# ================= GOOGLE LOGIN =================
+# ================= LOGIN =================
+@router.post("/login")
+def login(data: LoginRequest, db: Session = Depends(get_db)):
 
-@router.post("/google")
-def google_login(data: GoogleRequest, db: Session = Depends(get_db)):
-    payload = verify_google_token(data.token)
+    user = db.query(UserProfile).filter(
+        UserProfile.email == data.email
+    ).first()
 
-    if not payload:
-        raise HTTPException(status_code=401, detail="Invalid Google token")
-
-    email = payload.get("email")
-    name = payload.get("name")
-
-    if not email:
-        raise HTTPException(status_code=400, detail="Email not provided by Google")
-
-    # 🔍 check existing user
-    user = db.query(User).filter(User.email == email).first()
-
-    # 🆕 create user if not exists
     if not user:
-        user = User(
-            email=email,
-            name=name,
-            role="user"  # default role
-        )
-        db.add(user)
-        db.commit()
-        db.refresh(user)
+        raise HTTPException(status_code=401, detail="Invalid credentials")
 
-    # 🔐 create JWT
-    token = create_access_token({
-        "sub": str(user.id),
+    # 🔥 Debug check
+    print("USER FOUND:", user.email)
+
+    # 🔥 THIS LINE CAN CRASH IF bcrypt BROKEN
+    if not verify_password(data.password, user.password):
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+
+    payload = {
+        "sub": user.id,
+        "email": user.email,
         "role": user.role
+    }
+
+    access_token = create_access_token(payload)
+    refresh_token = create_refresh_token(payload)
+
+    response = JSONResponse({
+        "access_token": access_token,
+        "id": user.id,
+        "email": user.email,
+        "role": user.role,
     })
 
+    response.set_cookie(
+        key="refresh_token",
+        value=refresh_token,
+        httponly=True,
+        secure=False,
+        samesite="lax",
+        max_age=60 * 60 * 24 * 7,
+    )
+
+    return response
+
+
+# ================= ME =================
+@router.get("/me")
+def get_me(user=Depends(get_current_user)):
     return {
-        "access_token": token,
-        "token_type": "bearer",
-        "role": user.role
+        "id": user["sub"],
+        "email": user["email"],
+        "role": user["role"],
     }
