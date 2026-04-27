@@ -7,6 +7,7 @@ from app.core.security import (
     verify_password,
     create_access_token,
 )
+import uuid
 
 
 # ================= REGISTER =================
@@ -19,9 +20,12 @@ def register_user(db: Session, email: str, password: str, role: str):
         raise HTTPException(status_code=400, detail="User already exists")
 
     user = UserProfile(
+        id=uuid.uuid4(),
         email=email,
         password=hash_password(password),
         role=role,
+        full_name=None,
+        practice_name=None,
     )
 
     db.add(user)

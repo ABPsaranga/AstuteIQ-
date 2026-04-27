@@ -5,17 +5,18 @@ router = APIRouter()
 
 
 @router.post("/analyze")
-async def analyze(file: UploadFile = File(...)):
-    if not file.filename or not file.filename.endswith(".pdf"):
-        raise HTTPException(status_code=400, detail="Only PDF files allowed")
+async def analyze_document(file_path: str):
+    # TODO: plug your real LLM here
 
-    try:
-        content = await file.read()
-
-        pages_data = extract_blocks(content)
-        issues = analyze_with_gpt(pages_data)
-
-        return {"issues": issues}
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    return {
+        "severity": "High Risk",
+        "findings": [
+            {
+                "id": "1",
+                "category": "Compliance",
+                "title": "Example issue",
+                "detail": "Detected issue from document",
+                "markedIncorrect": False,
+            }
+        ],
+    }

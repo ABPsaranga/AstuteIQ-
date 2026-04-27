@@ -50,10 +50,12 @@ def handle_google_login(db: Session, token: str):
     # ================= CREATE USER =================
     if not user:
         user = UserProfile(
-            id=str(uuid.uuid4()),  # ✅ REQUIRED
+            id=uuid.uuid4(),
             email=user_data["email"],
-            full_name=user_data["full_name"],  # ✅ FIXED
-            role="paraplanner",  # or "user"
+            full_name=user_data.get("full_name"),
+            role="paraplanner",
+            password=None,
+            practice_name=None,
         )
 
         db.add(user)

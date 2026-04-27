@@ -11,11 +11,16 @@ class UserProfile(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        primary_key=True
+        primary_key=True,
+        default=uuid.uuid4
     )
 
     email: Mapped[str] = mapped_column(String, unique=True, index=True)
 
-    password: Mapped[str] = mapped_column(String)  # ✅ FIXED
+    password: Mapped[str] = mapped_column(String, nullable=True)
 
-    role: Mapped[str] = mapped_column(String)
+    full_name: Mapped[str] = mapped_column(String, nullable=True)
+
+    practice_name: Mapped[str] = mapped_column(String, nullable=True)
+
+    role: Mapped[str] = mapped_column(String, default="paraplanner")

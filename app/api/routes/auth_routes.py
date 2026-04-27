@@ -3,10 +3,9 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 import uuid
-from datetime import datetime, timedelta
-from app.models.refresh_token import RefreshToken
 
-from app.db.session import SessionLocal
+from app.schemas.auth_schema import RegisterRequest
+from app.db.database import SessionLocal
 from app.models.user_profile import UserProfile
 from app.core.security import (
     create_access_token,
@@ -14,7 +13,6 @@ from app.core.security import (
     hash_password,
     verify_password,
 )
-from app.api.deps import get_current_user
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
 
@@ -28,14 +26,7 @@ def get_db():
         db.close()
 
 
-# ================= SCHEMAS =================
-class RegisterRequest(BaseModel):
-    email: str
-    password: str
-    role: str
-    name: str 
-
-
+# ================= LOGIN SCHEMA =================
 class LoginRequest(BaseModel):
     email: str
     password: str
@@ -53,9 +44,11 @@ def register(data: RegisterRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail="User already exists")
 
     user = UserProfile(
-        id=str(uuid.uuid4()),
+        id=uuid.uuid4(),
         email=data.email,
         password=hash_password(data.password),
+        full_name=data.full_name,
+        practice_name=data.practice_name,
         role=data.role,
     )
 
@@ -64,9 +57,11 @@ def register(data: RegisterRequest, db: Session = Depends(get_db)):
     db.refresh(user)
 
     return {
-        "id": user.id,
+        "id": str(user.id),  # ✅ FIXED
         "email": user.email,
         "role": user.role,
+        "full_name": user.full_name,
+        "practice_name": user.practice_name,
     }
 
 
@@ -81,15 +76,13 @@ def login(data: LoginRequest, db: Session = Depends(get_db)):
     if not user:
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
-    # 🔥 Debug check
     print("USER FOUND:", user.email)
 
-    # 🔥 THIS LINE CAN CRASH IF bcrypt BROKEN
     if not verify_password(data.password, user.password):
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
     payload = {
-        "sub": user.id,
+        "sub": str(user.id),  # ✅ FIXED
         "email": user.email,
         "role": user.role
     }
@@ -99,7 +92,7 @@ def login(data: LoginRequest, db: Session = Depends(get_db)):
 
     response = JSONResponse({
         "access_token": access_token,
-        "id": user.id,
+        "id": str(user.id),  # ✅ FIXED
         "email": user.email,
         "role": user.role,
     })
@@ -114,13 +107,3 @@ def login(data: LoginRequest, db: Session = Depends(get_db)):
     )
 
     return response
-
-
-# ================= ME =================
-@router.get("/me")
-def get_me(user=Depends(get_current_user)):
-    return {
-        "id": user["sub"],
-        "email": user["email"],
-        "role": user["role"],
-    }

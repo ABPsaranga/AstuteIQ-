@@ -1,12 +1,13 @@
-# app/db/database.py  — fix the attribute name
 from app.core.config import settings
 from sqlalchemy import create_engine
 from sqlalchemy.orm import declarative_base, sessionmaker
 
-engine = create_engine(settings.DATABASE_URL, pool_pre_ping=True)  # match your Settings field
+engine = create_engine(settings.DATABASE_URL, pool_pre_ping=True)
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
 Base = declarative_base()
+
 
 def get_db():
     db = SessionLocal()
@@ -14,3 +15,10 @@ def get_db():
         yield db
     finally:
         db.close()
+
+
+# IMPORTANT: import models BEFORE create_all
+from app.models import user_profile
+
+#  CREATE TABLES
+Base.metadata.create_all(bind=engine)
