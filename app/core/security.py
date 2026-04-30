@@ -1,61 +1,46 @@
-from datetime import datetime, timedelta
-from jose import jwt, JWTError
-from passlib.context import CryptContext
+from jose import jwt
+import requests
+from fastapi import Depends, HTTPException
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
-import hashlib
+security = HTTPBearer()
 
-SECRET_KEY = "supersecretkey"
-ALGORITHM = "HS256"
-
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
-
-# ================= PASSWORD =================
-def hash_password(password: str) -> str:
-    # bcrypt limit fix: pre-hash long passwords
-    if len(password.encode("utf-8")) > 72:
-        password = hashlib.sha256(password.encode()).hexdigest()
-
-    return pwd_context.hash(password)
-
-def verify_password(plain_password: str, hashed_password: str) -> bool:
-    if len(plain_password.encode("utf-8")) > 72:
-        plain_password = hashlib.sha256(plain_password.encode()).hexdigest()
-
-    return pwd_context.verify(plain_password, hashed_password)
+SUPABASE_URL = "https://mkkloznbfdxvqwebcpkw.supabase.co"
+JWKS_URL = f"{SUPABASE_URL}/auth/v1/keys"
 
 
-# ================= ACCESS TOKEN =================
-def create_access_token(data: dict):
-    to_encode = data.copy()
-    expire = datetime.utcnow() + timedelta(minutes=60)
-    to_encode.update({
-        "exp": expire,
-        "type": "access"
-    })
+def get_current_user(
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+):
+    token = credentials.credentials
 
-    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
-
-def decode_access_token(token: str):
     try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        # 1. Get public keys from Supabase
+        jwks = requests.get(JWKS_URL).json()
+
+        # 2. Read token header
+        header = jwt.get_unverified_header(token)
+
+        # 3. Find matching key
+        key = next(
+            k for k in jwks["keys"]
+            if k["kid"] == header["kid"]
+        )
+
+        # 4. Verify token
+        payload = jwt.decode(
+            token,
+            key,
+            algorithms=["RS256"],
+            audience="authenticated",
+        )
+
         return payload
-    except JWTError:
-        return None
 
-
-# ================= REFRESH TOKEN =================
-def create_refresh_token(data: dict):
-    to_encode = data.copy()
-    expire = datetime.utcnow() + timedelta(days=7)
-    to_encode.update({"exp": expire})
-
-    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
-
-# ================= VERIFY =================
-def verify_token(token: str):
-    try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        return payload
-    except JWTError:
-        return None
+    except Exception as e:
+        print("JWT ERROR:", str(e))  # 👈 THIS WILL TELL US EXACT ISSUE
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid or expired token",
+        )
+    

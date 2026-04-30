@@ -23,7 +23,7 @@ class UserResponse(BaseModel):
     practice_name: str | None
 
     class Config:
-        orm_mode = True
+        from_attributes = True
         
 
 

@@ -4,7 +4,7 @@ from sqlalchemy import func
 
 from app.db.session import get_db
 from app.models.review import Review
-from app.api.deps import get_current_user
+from app.core.deps import get_current_user
 router = APIRouter(prefix="/dashboard", tags=["Dashboard"])
 
 
@@ -14,7 +14,9 @@ def get_dashboard_stats(
     db: Session = Depends(get_db),
     user=Depends(get_current_user)
 ):
-    total_reviews = db.query(Review).count()
+    total_reviews = db.query(Review).filter(
+    Review.user_id == current_user.id
+).count()
 
     # ✅ use rating instead of score
     avg_rating = db.query(func.avg(Review.rating)).scalar() or 0

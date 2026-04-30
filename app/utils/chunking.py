@@ -1,2 +1,4 @@
-def chunk_text(text: str, chunk_size: int = 2000) -> list[str]:
-    return [text[i:i + chunk_size] for i in range(0, len(text), chunk_size)]
+chunks = split_text(text, max_tokens=3000)
+
+for chunk in chunks:
+    analyze_soa(chunk)

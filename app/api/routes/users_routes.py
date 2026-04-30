@@ -6,7 +6,7 @@ router = APIRouter()
 
 @router.get("/")
 def get_users():
-    return {"users": []}
+    return []
 
 @router.post("/")
 def create_user(user: dict):
