@@ -1,0 +1,154 @@
+@import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=DM+Mono:ital,wght@0,300;0,400;0,500;1,400&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ===== BASE ===== */
+@layer base {
+  :root {
+    --brand-primary:   #6B2FD9;
+    --brand-secondary: #A78BFA;
+    --bg-deep:         #0B0B14;
+    --gold:            #E8B84B;
+    --pass:            #2DD4A0;
+    --fail:            #FF6B6B;
+    --warn:            #FFB347;
+  }
+
+  * {
+    @apply border-slate-800;
+  }
+
+  html {
+    font-family: 'DM Sans', system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  body {
+    background-color: #0B0B14;
+    color: #F1F5F9;
+    font-family: 'DM Sans', system-ui, sans-serif;
+  }
+
+  h1, h2, h3 {
+    font-family: 'DM Serif Display', Georgia, serif;
+  }
+
+  code, pre, .mono {
+    font-family: 'DM Mono', 'Fira Code', monospace;
+  }
+}
+
+/* ===== COMPONENTS ===== */
+@layer components {
+
+  /* ── Cards ── */
+  .card {
+    @apply bg-[#0f0f1a] border border-slate-800/60 rounded-2xl p-6 shadow-xl;
+  }
+
+  /* ── Inputs ── */
+  .input {
+    @apply w-full px-3 py-2 bg-[#0b0b14] border border-slate-700 rounded-lg text-white
+           placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-[#6B2FD9]/60
+           focus:border-[#6B2FD9] transition-colors duration-150;
+  }
+
+  /* ── Labels ── */
+  .label {
+    @apply block text-sm font-medium text-slate-400 mb-1;
+  }
+
+  /* ── Buttons ── */
+  .btn-primary {
+    @apply inline-flex items-center gap-2 px-4 py-2 rounded-xl font-semibold text-sm
+           bg-[#6B2FD9] hover:bg-[#5a27b8] text-white
+           transition-colors duration-150 disabled:opacity-40 disabled:cursor-not-allowed;
+  }
+
+  .btn-secondary {
+    @apply inline-flex items-center gap-2 px-4 py-2 rounded-xl font-medium text-sm
+           bg-slate-800/60 hover:bg-slate-700/60 text-slate-300 border border-slate-700
+           transition-colors duration-150 disabled:opacity-40 disabled:cursor-not-allowed;
+  }
+
+  /* ── Page headers ── */
+  .page-header {
+    @apply text-2xl font-bold text-white;
+    font-family: 'DM Serif Display', Georgia, serif;
+  }
+
+  .page-sub {
+    @apply text-sm text-slate-400 mt-1;
+  }
+
+  /* ── Status badges ── */
+  .badge-success {
+    @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold
+           bg-[#2DD4A0]/15 text-[#2DD4A0] border border-[#2DD4A0]/25;
+  }
+
+  .badge-error {
+    @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold
+           bg-[#FF6B6B]/15 text-[#FF6B6B] border border-[#FF6B6B]/25;
+  }
+
+  .badge-warning {
+    @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold
+           bg-[#FFB347]/15 text-[#FFB347] border border-[#FFB347]/25;
+  }
+
+  .badge-gold {
+    @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold
+           bg-[#E8B84B]/15 text-[#E8B84B] border border-[#E8B84B]/25;
+  }
+
+  .badge-neutral {
+    @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold
+           bg-slate-700/40 text-slate-400 border border-slate-700;
+  }
+
+  /* ── Skeleton loader ── */
+  .skeleton {
+    @apply bg-slate-800/60 animate-pulse rounded-lg;
+  }
+
+  /* ── Surface variants ── */
+  .surface-hover {
+    @apply hover:bg-slate-800/40 transition-colors duration-150;
+  }
+}
+
+/* ===== UTILITIES ===== */
+@layer utilities {
+
+  /* Animations */
+  .animate-fade-in {
+    animation: fadeIn 0.3s ease-out both;
+  }
+
+  .animate-slide-up {
+    animation: slideUp 0.25s ease-out both;
+  }
+
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(6px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  @keyframes slideUp {
+    from { opacity: 0; transform: translateY(12px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  /* Scrollbar */
+  .scrollbar-thin {
+    scrollbar-width: thin;
+    scrollbar-color: #6B2FD9 transparent;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar       { width: 4px; }
+  .scrollbar-thin::-webkit-scrollbar-track { background: transparent; }
+  .scrollbar-thin::-webkit-scrollbar-thumb { background: #6B2FD9; border-radius: 2px; }
+}
