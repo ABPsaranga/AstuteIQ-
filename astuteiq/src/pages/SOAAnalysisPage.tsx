@@ -405,11 +405,22 @@ export default function SOAAnalysisPage() {
       setStep(2)
       const { data } = await supabase.auth.getSession()
       const token    = data.session?.access_token ?? ''
-      const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'import.meta.env.VITE_API_URL'
+      const BASE_URL =
+        import.meta.env.VITE_API_BASE_URL ??
+        import.meta.env.VITE_API_URL
+
       const response = await fetch(`${BASE_URL}/api/soa/review/stream`, {
         method:  'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-        body:    JSON.stringify({ mode: m, documents }),
+        headers: 
+        { 'Content-Type': 'application/json', 
+          'Authorization': `Bearer ${token}` 
+        },
+        body:    JSON.stringify(
+          {
+             mode: m, 
+             documents 
+          }
+        ),
       })
       if (!response.ok) {
         const err = await response.json().catch(() => ({}))
