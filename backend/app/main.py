@@ -21,6 +21,7 @@ app.add_middleware(
         "http://127.0.0.1:5173",
         "http://localhost:3000",
         "https://astute-iq-nsjv.vercel.app",
+        "https://astute-iq-nsjv-oh0y0v37f-astuteiq.vercel.app",
     ],
     allow_credentials=True,
     allow_methods=["*"],
