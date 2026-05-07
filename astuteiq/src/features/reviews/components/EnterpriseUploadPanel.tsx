@@ -16,7 +16,7 @@ export default function EnterpriseUploadPanel() {
       toast.error('Add at least one file.')
       return
     }
-    await run()
+    await run([], 'full')
   }
 
   return (
