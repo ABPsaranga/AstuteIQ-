@@ -18,7 +18,7 @@ interface UploadedDoc {
 }
 interface CheckResult {
   id: string
-  area: 'consistency' | 'structure' | 'personalisation' | 'compliance'
+  area: 'consistency' | 'structure' | 'personalisation' | 'compliance' | 'regulatory'
   label: string; status: 'pass' | 'fail' | 'warning' | 'na'; note: string
 }
 interface ReviewResult {
@@ -53,11 +53,23 @@ const STEPS: Record<'quick' | 'full', string[]> = {
     'Checking consistency across all figures',
     'Checking structure & personalisation (P1–P10)',
     'Running full compliance checklist (C1–C29)',
+    'Running regulatory accuracy checks (REG)',
     'Compiling full report',
   ],
 }
 
-// ── readFile OUTSIDE component — prevents closure recursion ──────────────────
+const AREA_LABELS: Record<string, string> = {
+  consistency:     'Consistency',
+  structure:       'Structure',
+  personalisation: 'Personalisation',
+  compliance:      'Compliance',
+  regulatory:      'Regulatory Accuracy',
+}
+
+// Area display order
+const AREA_ORDER = ['consistency', 'structure', 'personalisation', 'compliance', 'regulatory'] as const
+
+// readFile OUTSIDE component — prevents closure recursion
 async function readFile(file: File, labelPrefix: string): Promise<UploadedDoc> {
   const ext = file.name.split('.').pop()?.toLowerCase() ?? ''
   const id  = `${file.name}_${file.lastModified}`
@@ -80,8 +92,15 @@ async function readFile(file: File, labelPrefix: string): Promise<UploadedDoc> {
     }
   }
 
+  // XLSX → base64 (matches vanilla JS logic — text() produces garbled binary)
+  if (ext === 'xlsx' || ext === 'xls') {
+    const buf = await file.arrayBuffer()
+    const b64 = btoa(String.fromCharCode(...new Uint8Array(buf)))
+    return { id, name: file.name, size: file.size, type: 'xlsx', content: b64, docType: 'pdf_b64', label: labelPrefix }
+  }
+
   const text = await file.text().catch(() => `[Could not read: ${file.name}]`)
-  return { id, name: file.name, size: file.size, type: ext === 'xlsx' || ext === 'xls' ? 'xlsx' : 'other', content: text, docType: 'text', label: labelPrefix }
+  return { id, name: file.name, size: file.size, type: 'other', content: text, docType: 'text', label: labelPrefix }
 }
 
 // ── Upload Zone ───────────────────────────────────────────────────────────────
@@ -104,11 +123,9 @@ function UploadZone({ label, num, desc, formats, file, multiple, files, onDrop, 
   const hasFile = multiple ? (files?.length ?? 0) > 0 : !!file
   return (
     <div className={`relative flex flex-col gap-3 border-2 border-dashed rounded-xl p-4 min-h-[200px] transition-all duration-150 ${
-      hasFile
-        ? 'border-[#6B2FD9] bg-[#6B2FD9]/5'
-        : isDragActive
-        ? 'border-[#A78BFA] bg-[#6B2FD9]/5'
-        : 'border-slate-800 bg-[#0f0f1a] hover:border-[#6B2FD9]/40'
+      hasFile ? 'border-[#6B2FD9] bg-[#6B2FD9]/5'
+      : isDragActive ? 'border-[#A78BFA] bg-[#6B2FD9]/5'
+      : 'border-slate-800 bg-[#0f0f1a] hover:border-[#6B2FD9]/40'
     }`}>
       <div className="flex items-center gap-2">
         <span className="w-5 h-5 rounded-full bg-[#6B2FD9] flex items-center justify-center text-white text-xs font-bold shrink-0">{num}</span>
@@ -170,9 +187,7 @@ function OverridePanel({ check, existing, onSave, onRemove, onClose }: OverrideP
         {STATUSES.map((s) => (
           <button key={s} onClick={() => setStatus(s)}
             className={`text-xs px-3 py-1.5 rounded-lg border font-medium transition-colors ${
-              status === s
-                ? 'border-[#6B2FD9] bg-[#6B2FD9]/20 text-[#A78BFA]'
-                : 'border-slate-700 text-slate-500 hover:border-slate-500'
+              status === s ? 'border-[#6B2FD9] bg-[#6B2FD9]/20 text-[#A78BFA]' : 'border-slate-700 text-slate-500 hover:border-slate-500'
             }`}>{s}</button>
         ))}
       </div>
@@ -229,18 +244,21 @@ function CheckRow({ check, reviewId, feedback, onFeedbackSaved, onFeedbackRemove
 
   const displayStatus = feedback ? feedback.new_status.toLowerCase() as CheckResult['status'] : check.status
 
+  // Regulatory checks get a distinct left border colour
+  const isRegulatory = check.area === 'regulatory'
+
   return (
     <div className={`py-3 border-b border-slate-800/60 last:border-0 ${
       isFlagged          ? 'border-l-2 border-l-[#E8B84B]/60 pl-3 -ml-3' :
-      check.status === 'fail'    ? 'border-l-2 border-l-[#FF6B6B]/40 pl-3 -ml-3' :
-      check.status === 'warning' ? 'border-l-2 border-l-[#FFB347]/40 pl-3 -ml-3' : ''
+      check.status === 'fail'    ? `border-l-2 ${isRegulatory ? 'border-l-[#A78BFA]/60' : 'border-l-[#FF6B6B]/40'} pl-3 -ml-3` :
+      check.status === 'warning' ? `border-l-2 ${isRegulatory ? 'border-l-[#A78BFA]/40' : 'border-l-[#FFB347]/40'} pl-3 -ml-3` : ''
     }`}>
       <div className="flex gap-3 items-start">
         <div className="shrink-0 mt-0.5">
-          {displayStatus === 'pass'    && <CheckCircle size={15} className="text-[#2DD4A0]" />}
-          {displayStatus === 'fail'    && <XCircle     size={15} className="text-[#FF6B6B]" />}
+          {displayStatus === 'pass'    && <CheckCircle   size={15} className="text-[#2DD4A0]" />}
+          {displayStatus === 'fail'    && <XCircle       size={15} className="text-[#FF6B6B]" />}
           {displayStatus === 'warning' && <AlertTriangle size={14} className="text-[#FFB347]" />}
-          {displayStatus === 'na'      && <Minus        size={15} className="text-slate-600" />}
+          {displayStatus === 'na'      && <Minus         size={15} className="text-slate-600" />}
         </div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap mb-1">
@@ -283,17 +301,13 @@ function CheckRow({ check, reviewId, feedback, onFeedbackSaved, onFeedbackRemove
 async function exportWordReport(result: ReviewResult, feedbackMap: Record<string, FeedbackRecord>) {
   const { Document, Packer, Paragraph, Table, TableRow, TableCell, TextRun, WidthType, AlignmentType, HeadingLevel } = await import('docx')
 
-  const STATUS_COLOR: Record<string, string> = {
-    PASS: '2DD4A0', WARNING: 'FFB347', FAIL: 'FF6B6B', NA: '6b7280',
-  }
+  const STATUS_COLOR: Record<string, string> = { PASS: '2DD4A0', WARNING: 'FFB347', FAIL: 'FF6B6B', NA: '6b7280' }
   const getFinalStatus = (c: CheckResult) => feedbackMap[c.id] ? feedbackMap[c.id].new_status : c.status.toUpperCase()
 
-  const grouped = {
-    compliance:      result.checks.filter(c => c.area === 'compliance'),
-    structure:       result.checks.filter(c => c.area === 'structure'),
-    consistency:     result.checks.filter(c => c.area === 'consistency'),
-    personalisation: result.checks.filter(c => c.area === 'personalisation'),
-  }
+  const grouped = AREA_ORDER.reduce((acc, area) => {
+    acc[area] = result.checks.filter(c => c.area === area)
+    return acc
+  }, {} as Record<string, CheckResult[]>)
 
   function section(title: string, checks: CheckResult[]) {
     if (!checks.length) return []
@@ -339,12 +353,14 @@ async function exportWordReport(result: ReviewResult, feedbackMap: Record<string
     new Paragraph({ text: `Risk Rating: ${result.risk_level}` }),
     new Paragraph({ text: '' }),
     new Paragraph({ text: 'Detailed Findings', heading: HeadingLevel.HEADING_1 }),
-    ...section('Compliance (C1–C29)', grouped.compliance),
-    ...section('Structure', grouped.structure),
-    ...section('Consistency', grouped.consistency),
-    ...section('Personalisation (P1–P10)', grouped.personalisation),
+    ...section('Compliance (C1–C29)',           grouped.compliance      ?? []),
+    ...section('Structure',                      grouped.structure       ?? []),
+    ...section('Consistency',                    grouped.consistency     ?? []),
+    ...section('Personalisation (P1–P10)',       grouped.personalisation ?? []),
+    ...section('Regulatory Accuracy (REG)',      grouped.regulatory      ?? []),
     new Paragraph({ text: '' }),
     new Paragraph({ text: 'AI-assisted review. All findings must be independently verified by a qualified paraplanner before SOA submission.' }),
+    new Paragraph({ text: 'Regulatory thresholds sourced from ato.gov.au at time of review. Verify all ATO figures before lodgement.' }),
   ]}]})
 
   const blob = await Packer.toBlob(doc)
@@ -372,6 +388,7 @@ export default function SOAAnalysisPage() {
   const [collapsedAreas, setCollapsedAreas] = useState<Record<string, boolean>>({})
   const [streamText, setStreamText]   = useState<string>('')
   const timerRef                      = useRef<ReturnType<typeof setInterval> | null>(null)
+  const abortRef                      = useRef<AbortController | null>(null)
   const reviewIdRef                   = useRef<string>(`soa_${Date.now()}`)
 
   useEffect(() => {
@@ -399,28 +416,24 @@ export default function SOAAnalysisPage() {
     setLoading(true); setError(null); setResult(null)
     setFeedbackMap({}); setStep(1); setElapsed(0); setStreamText('')
     timerRef.current = setInterval(() => setElapsed((e) => e + 1), 1000)
+
+    // 180s timeout — full review with regulatory ATO checks can take up to 2min
+    const controller  = new AbortController()
+    abortRef.current  = controller
+    const timeoutId   = setTimeout(() => controller.abort(), 180_000)
+
     try {
       const documents = [soaDoc, ...(refDoc ? [refDoc] : []), ...suppDocs]
         .map((d) => ({ type: d.docType, label: d.label, content: d.content }))
       setStep(2)
       const { data } = await supabase.auth.getSession()
       const token    = data.session?.access_token ?? ''
-      const BASE_URL =
-        import.meta.env.VITE_API_BASE_URL ??
-        import.meta.env.VITE_API_URL
-
-      const response = await fetch(`${BASE_URL}/api/soa/review/stream`, {
+      const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? import.meta.env.VITE_API_URL ?? 'http://127.0.0.1:8001/api'
+      const response = await fetch(`${BASE_URL}/soa/review/stream`, {
         method:  'POST',
-        headers: 
-        { 'Content-Type': 'application/json', 
-          'Authorization': `Bearer ${token}` 
-        },
-        body:    JSON.stringify(
-          {
-             mode: m, 
-             documents 
-          }
-        ),
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body:    JSON.stringify({ mode: m, documents }),
+        signal:  controller.signal,
       })
       if (!response.ok) {
         const err = await response.json().catch(() => ({}))
@@ -441,12 +454,19 @@ export default function SOAAnalysisPage() {
           const payload = JSON.parse(line.slice(6))
           if (payload.error) throw new Error(payload.error)
           if (payload.chunk) setStreamText((prev) => prev + payload.chunk)
-          if (payload.done && payload.result) { setStep(5); setResult(payload.result); setStreamText('') }
+          if (payload.done && payload.result) { setStep(6); setResult(payload.result); setStreamText('') }
         }
       }
     } catch (err: unknown) {
-      setError((err as { message?: string })?.message ?? 'Review failed.')
+      const msg = (err as { message?: string })?.message ?? ''
+      // AbortError means we hit the 180s timeout — still wait, don't show as failure
+      if (msg === 'The operation was aborted.' || msg.includes('aborted')) {
+        setError('Review timed out after 180 seconds. The server may still be processing — try again with a shorter document.')
+      } else {
+        setError(msg || 'Review failed.')
+      }
     } finally {
+      clearTimeout(timeoutId)
       if (timerRef.current) clearInterval(timerRef.current)
       setLoading(false); setStep(0)
     }
@@ -469,18 +489,12 @@ export default function SOAAnalysisPage() {
 
   const counts    = result?.checks.reduce((acc, c) => { acc[c.status] = (acc[c.status] ?? 0) + 1; return acc }, {} as Record<string, number>)
   const flagCount = Object.keys(feedbackMap).length
-  const riskColor = result?.risk_level === 'HIGH'
-    ? 'text-[#FF6B6B] bg-[#FF6B6B]/10 border-[#FF6B6B]/25'
-    : result?.risk_level === 'MEDIUM'
-    ? 'text-[#FFB347] bg-[#FFB347]/10 border-[#FFB347]/25'
+  const riskColor = result?.risk_level === 'HIGH'   ? 'text-[#FF6B6B] bg-[#FF6B6B]/10 border-[#FF6B6B]/25'
+    : result?.risk_level === 'MEDIUM' ? 'text-[#FFB347] bg-[#FFB347]/10 border-[#FFB347]/25'
     : 'text-[#2DD4A0] bg-[#2DD4A0]/10 border-[#2DD4A0]/25'
 
-  const AREA_LABELS: Record<string, string> = {
-    consistency: 'Consistency', structure: 'Structure',
-    personalisation: 'Personalisation', compliance: 'Compliance',
-  }
   const groupedChecks = result
-    ? (['consistency', 'structure', 'personalisation', 'compliance'] as const)
+    ? AREA_ORDER
         .map((area) => ({ area, items: result.checks.filter((c) => c.area === area) }))
         .filter((g) => g.items.length > 0)
     : []
@@ -532,15 +546,12 @@ export default function SOAAnalysisPage() {
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
 
               {/* Quick Check */}
-              <button
-                onClick={() => runReview('quick')}
-                disabled={!soaDoc}
-                className="relative flex flex-col gap-2 p-5 rounded-xl border-2 border-[#6B2FD9]/40 bg-[#6B2FD9]/5 hover:bg-[#6B2FD9]/10 hover:border-[#6B2FD9] text-left transition-all duration-150 disabled:opacity-30 disabled:cursor-not-allowed"
-              >
+              <button onClick={() => runReview('quick')} disabled={!soaDoc}
+                className="relative flex flex-col gap-2 p-5 rounded-xl border-2 border-[#6B2FD9]/40 bg-[#6B2FD9]/5 hover:bg-[#6B2FD9]/10 hover:border-[#6B2FD9] text-left transition-all duration-150 disabled:opacity-30 disabled:cursor-not-allowed">
                 <div className="flex items-center gap-2">
                   <Zap size={16} className="text-[#A78BFA]" />
                   <span className="text-sm font-semibold text-white">Quick Check</span>
-                  <span className="ml-auto font-mono text-xs text-slate-500">~40s</span>
+                  <span className="ml-auto font-mono text-xs text-slate-500">~40–60s</span>
                 </div>
                 <ul className="space-y-0.5 text-xs text-slate-400">
                   <li>· Consistency check across all figures</li>
@@ -552,28 +563,24 @@ export default function SOAAnalysisPage() {
               </button>
 
               {/* Full Review */}
-              <button
-                onClick={() => runReview('full')}
-                disabled={!soaDoc}
-                className="relative flex flex-col gap-2 p-5 rounded-xl border-2 border-[#6B2FD9] bg-[#6B2FD9]/10 hover:bg-[#6B2FD9]/15 text-left transition-all duration-150 disabled:opacity-30 disabled:cursor-not-allowed"
-              >
+              <button onClick={() => runReview('full')} disabled={!soaDoc}
+                className="relative flex flex-col gap-2 p-5 rounded-xl border-2 border-[#6B2FD9] bg-[#6B2FD9]/10 hover:bg-[#6B2FD9]/15 text-left transition-all duration-150 disabled:opacity-30 disabled:cursor-not-allowed">
                 <div className="flex items-center gap-2">
                   <Play size={16} className="text-[#A78BFA]" />
                   <span className="text-sm font-semibold text-white">Full Review</span>
-                  <span className="ml-auto font-mono text-xs text-slate-500">~90s</span>
+                  <span className="ml-auto font-mono text-xs text-slate-500">~90–120s</span>
                 </div>
                 <ul className="space-y-0.5 text-xs text-slate-400">
-                  <li>· All four areas (C, P, S, X)</li>
-                  <li>· All 39+ checks</li>
+                  <li>· All areas: C, P, S, X + Regulatory (REG)</li>
+                  <li>· 44+ checks incl. ATO threshold verification</li>
                   <li>· Full PASS confirmations with page refs</li>
                   <li>· All findings returned</li>
-                  <li>· Max 10,000 output tokens</li>
+                  <li>· Max 12,000 output tokens</li>
                 </ul>
                 <span className="absolute top-4 right-4 text-xs px-2 py-0.5 rounded-full bg-[#6B2FD9]/30 text-[#A78BFA] border border-[#6B2FD9]/40 font-medium">
                   Recommended
                 </span>
               </button>
-
             </div>
           ) : (
             <div className="space-y-4">
@@ -581,7 +588,7 @@ export default function SOAAnalysisPage() {
                 <div className="w-4 h-4 border-2 border-[#6B2FD9] border-t-transparent rounded-full animate-spin shrink-0" />
                 <span>{activeSteps[(step - 1) || 0]}</span>
                 {elapsed > 0 && (
-                  <span className="ml-auto font-mono text-xs text-slate-600">{elapsed}s / {mode === 'quick' ? '~40s' : '~90s'}</span>
+                  <span className="ml-auto font-mono text-xs text-slate-600">{elapsed}s / {mode === 'quick' ? '~40s' : elapsed > 90 ? `${elapsed}s — still running…` : '~90s'}</span>
                 )}
               </div>
               <div className="space-y-2">
@@ -620,8 +627,8 @@ export default function SOAAnalysisPage() {
                   {result.client_name || 'Client'}
                 </h2>
                 <p className="text-xs text-slate-500 mt-0.5">
-                  {result.advice_type  && <span>{result.advice_type} · </span>}
-                  {result.adviser_name && <span>{result.adviser_name} · </span>}
+                  {result.advice_type   && <span>{result.advice_type} · </span>}
+                  {result.adviser_name  && <span>{result.adviser_name} · </span>}
                   {result.practice_name && <span>{result.practice_name} · </span>}
                   {result.date}
                 </p>
@@ -639,7 +646,6 @@ export default function SOAAnalysisPage() {
               </div>
             </div>
 
-            {/* Score grid */}
             {counts && (
               <div className="grid grid-cols-4 gap-2">
                 {([
@@ -675,38 +681,41 @@ export default function SOAAnalysisPage() {
             </div>
           </div>
 
-          {/* Findings by area */}
           {groupedChecks.map(({ area, items }) => {
             const areaFlagCount = items.filter((c) => feedbackMap[c.id]).length
             const failCount     = items.filter(c => c.status === 'fail').length
             const warnCount     = items.filter(c => c.status === 'warning').length
             const isCollapsed   = collapsedAreas[area]
+            const isRegArea     = area === 'regulatory'
             return (
-              <div key={area} className="card space-y-0">
+              <div key={area} className={`card space-y-0 ${isRegArea ? 'border-[#A78BFA]/20' : ''}`}>
                 <button
                   onClick={() => setCollapsedAreas((p) => ({ ...p, [area]: !p[area] }))}
                   className="w-full flex items-center justify-between pb-3 border-b border-slate-800"
                 >
                   <div className="flex items-center gap-2 flex-wrap">
-                    <h3 className="text-xs font-semibold uppercase tracking-widest text-slate-400">{AREA_LABELS[area]}</h3>
+                    <h3 className={`text-xs font-semibold uppercase tracking-widest ${isRegArea ? 'text-[#A78BFA]' : 'text-slate-400'}`}>
+                      {AREA_LABELS[area]}
+                    </h3>
                     <span className="text-xs text-slate-600">({items.length} checks)</span>
-                    {failCount > 0 && (
-                      <span className="text-xs px-1.5 py-0.5 rounded bg-[#FF6B6B]/15 text-[#FF6B6B]">{failCount} fail</span>
-                    )}
-                    {warnCount > 0 && (
-                      <span className="text-xs px-1.5 py-0.5 rounded bg-[#FFB347]/15 text-[#FFB347]">{warnCount} warn</span>
-                    )}
-                    {areaFlagCount > 0 && (
-                      <span className="text-xs px-1.5 py-0.5 rounded bg-[#E8B84B]/15 text-[#E8B84B]">⚑ {areaFlagCount}</span>
+                    {failCount > 0 && <span className="text-xs px-1.5 py-0.5 rounded bg-[#FF6B6B]/15 text-[#FF6B6B]">{failCount} fail</span>}
+                    {warnCount > 0 && <span className="text-xs px-1.5 py-0.5 rounded bg-[#FFB347]/15 text-[#FFB347]">{warnCount} warn</span>}
+                    {areaFlagCount > 0 && <span className="text-xs px-1.5 py-0.5 rounded bg-[#E8B84B]/15 text-[#E8B84B]">⚑ {areaFlagCount}</span>}
+                    {isRegArea && (
+                      <span className="text-xs px-1.5 py-0.5 rounded bg-[#A78BFA]/10 text-[#A78BFA] border border-[#A78BFA]/20">
+                        ATO thresholds
+                      </span>
                     )}
                   </div>
-                  {isCollapsed
-                    ? <ChevronDown size={14} className="text-slate-500" />
-                    : <ChevronUp   size={14} className="text-slate-500" />
-                  }
+                  {isCollapsed ? <ChevronDown size={14} className="text-slate-500" /> : <ChevronUp size={14} className="text-slate-500" />}
                 </button>
                 {!isCollapsed && (
                   <div className="pt-2">
+                    {isRegArea && (
+                      <p className="text-xs text-[#A78BFA]/70 mb-3 pb-2 border-b border-slate-800/60">
+                        Thresholds sourced from ato.gov.au at time of review. Verify all figures before lodgement.
+                      </p>
+                    )}
                     {items.map((c) => (
                       <CheckRow key={c.id} check={c} reviewId={reviewIdRef.current} feedback={feedbackMap[c.id]}
                         onFeedbackSaved={(fb) => setFeedbackMap((prev) => ({ ...prev, [c.id]: fb }))}
