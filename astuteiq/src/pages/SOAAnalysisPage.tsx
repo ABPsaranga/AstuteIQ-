@@ -1,6 +1,6 @@
 // src/pages/SOAAnalysisPage.tsx
 
-import { useState, useCallback, useRef, useEffect } from 'react'
+import { useState, useCallback, useRef } from 'react'
 import { useDropzone } from 'react-dropzone'
 import {
   AlertTriangle,
@@ -15,16 +15,12 @@ import {
   RotateCcw,
   FileText,
   Clock,
-  Flag,
-  Download,
-  ChevronDown,
-  ChevronUp,
 } from 'lucide-react'
 
 import StatusBadge from '../components/ui/StatusBadge'
-import apiClient from '../lib/api'
 import type { ReviewStatus } from '../features/reviews/types'
 import supabase from '../lib/supabase'
+import { useLiveDashboardStore } from '../store/liveDashboardStore'
 
 /* ============================================================================
    TYPES
@@ -55,6 +51,7 @@ interface CheckResult {
 }
 
 interface ReviewResult {
+  id?: string
   client_name: string
   adviser_name: string
   practice_name: string
@@ -65,18 +62,7 @@ interface ReviewResult {
   docs_reviewed: string[]
   mode: 'quick' | 'full'
   checks: CheckResult[]
-}
-
-interface FeedbackRecord {
-  id: string
-  review_id: string
-  check_id: string
-  check_label: string
-  original_status: string
-  new_status: string
-  comment: string
-  user_id: string
-  created_at: string
+  score?: number
 }
 
 /* ============================================================================
@@ -117,21 +103,20 @@ const STEPS: Record<'quick' | 'full', string[]> = {
   ],
 }
 
-const AREA_LABELS: Record<string, string> = {
-  consistency: 'Consistency',
-  structure: 'Structure',
-  personalisation: 'Personalisation',
-  compliance: 'Compliance',
-  regulatory: 'Regulatory Accuracy',
-}
+function calculateScore(checks: CheckResult[]) {
+  if (!checks.length) return 0
 
-const AREA_ORDER = [
-  'consistency',
-  'structure',
-  'personalisation',
-  'compliance',
-  'regulatory',
-] as const
+  let total = 0
+
+  for (const check of checks) {
+    if (check.status === 'pass') total += 100
+    else if (check.status === 'warning') total += 60
+    else if (check.status === 'na') total += 80
+    else total += 20
+  }
+
+  return Math.round(total / checks.length)
+}
 
 /* ============================================================================
    FILE READER
@@ -292,11 +277,11 @@ function UploadZone({
 
   return (
     <div
-      className={`relative flex flex-col gap-3 border-2 border-dashed rounded-xl p-4 min-h-[220px] transition-all duration-150 ${
+      className={`relative flex flex-col gap-3 border-2 border-dashed rounded-2xl p-4 min-h-[220px] transition-all duration-300 ${
         hasFile
-          ? 'border-[#6B2FD9] bg-[#6B2FD9]/5'
+          ? 'border-[#6B2FD9] bg-[#6B2FD9]/10 shadow-lg shadow-[#6B2FD9]/10'
           : isDragActive
-          ? 'border-[#A78BFA] bg-[#6B2FD9]/5'
+          ? 'border-[#A78BFA] bg-[#6B2FD9]/10'
           : 'border-slate-800 bg-[#0f0f1a] hover:border-[#6B2FD9]/40'
       }`}
     >
@@ -415,6 +400,16 @@ export default function SOAAnalysisPage() {
   const abortRef = useRef<AbortController | null>(null)
 
   /* ==========================================================================
+     LIVE DASHBOARD STORE
+  ========================================================================== */
+
+  const addLiveReview =
+    useLiveDashboardStore((s) => s.addReview)
+
+  const updateLiveReview =
+    useLiveDashboardStore((s) => s.updateReview)
+
+  /* ==========================================================================
      FILE DROPS
   ========================================================================== */
 
@@ -462,236 +457,226 @@ export default function SOAAnalysisPage() {
   ========================================================================== */
 
   async function runReview(reviewMode: 'quick' | 'full') {
-  if (!soaDoc) {
-    setError('Please upload an SOA.')
-    return
-  }
+    if (!soaDoc) {
+      setError('Please upload an SOA.')
+      return
+    }
 
-  setLoading(true)
-  setMode(reviewMode)
+    setLoading(true)
+    setMode(reviewMode)
 
-  setError(null)
-  setResult(null)
-  setElapsed(0)
-  setStep(1)
-  setStreamText('')
+    setError(null)
+    setResult(null)
+    setElapsed(0)
+    setStep(1)
+    setStreamText('')
 
-  timerRef.current = setInterval(() => {
-    setElapsed((e) => e + 1)
-  }, 1000)
+    /* ============================================================
+       LIVE DASHBOARD REVIEW ENTRY
+    ============================================================ */
 
-  const controller = new AbortController()
+    const liveReviewId = crypto.randomUUID()
 
-  abortRef.current = controller
+    addLiveReview({
+      id: liveReviewId,
+      fileName: soaDoc.name,
+      status: 'processing',
+      progress: 5,
+      createdAt: new Date().toISOString(),
+      mode: reviewMode,
+      score: 0,
+    })
 
-  const timeoutId = setTimeout(() => {
-    controller.abort()
-  }, 180000)
+    timerRef.current = setInterval(() => {
+      setElapsed((e) => e + 1)
+    }, 1000)
 
-  try {
-    // ─────────────────────────────────────────────
-    // PREPARE DOCUMENTS
-    // ─────────────────────────────────────────────
+    const controller = new AbortController()
 
-    const documents = [
-      soaDoc,
-      ...(refDoc ? [refDoc] : []),
-      ...suppDocs,
-    ].map((d) => ({
-      type: d.docType,
-      label: d.label,
-      content: d.content,
-    }))
+    abortRef.current = controller
 
-    setStep(2)
+    const timeoutId = setTimeout(() => {
+      controller.abort()
+    }, 180000)
 
-    // ─────────────────────────────────────────────
-    // AUTH
-    // ─────────────────────────────────────────────
+    try {
+      const documents = [
+        soaDoc,
+        ...(refDoc ? [refDoc] : []),
+        ...suppDocs,
+      ].map((d) => ({
+        type: d.docType,
+        label: d.label,
+        content: d.content,
+      }))
 
-    const { data } = await supabase.auth.getSession()
+      setStep(2)
 
-    const token = data.session?.access_token ?? ''
+      updateLiveReview(liveReviewId, {
+        progress: 20,
+      })
 
-    // ─────────────────────────────────────────────
-    // BASE URL
-    // ─────────────────────────────────────────────
+      const { data } = await supabase.auth.getSession()
 
-    const BASE_URL =
-      import.meta.env.VITE_API_BASE_URL ??
-      import.meta.env.VITE_API_URL ??
-      'http://127.0.0.1:8001'
+      const token = data.session?.access_token ?? ''
 
-    // ─────────────────────────────────────────────
-    // REQUEST
-    // ─────────────────────────────────────────────
+      const BASE_URL =
+        import.meta.env.VITE_API_BASE_URL ??
+        import.meta.env.VITE_API_URL ??
+        'http://127.0.0.1:8001'
 
-    const response = await fetch(
-      `${BASE_URL}/api/soa/review/stream`,
-      {
-        method: 'POST',
+      const response = await fetch(
+        `${BASE_URL}/api/soa/review/stream`,
+        {
+          method: 'POST',
 
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
 
-        body: JSON.stringify({
-          mode: reviewMode,
-          documents,
-        }),
+          body: JSON.stringify({
+            mode: reviewMode,
+            documents,
+          }),
 
-        signal: controller.signal,
-      }
-    )
+          signal: controller.signal,
+        }
+      )
 
-    // ─────────────────────────────────────────────
-    // ERROR HANDLING
-    // ─────────────────────────────────────────────
+      if (!response.ok) {
+        let message = `Server error ${response.status}`
 
-    if (!response.ok) {
-      let message = `Server error ${response.status}`
-
-      try {
-        const err = await response.json()
-
-        message = err.detail ?? message
-      } catch {
         try {
-          message = await response.text()
+          const err = await response.json()
+
+          message = err.detail ?? message
         } catch {
           //
         }
+
+        throw new Error(message)
       }
 
-      throw new Error(message)
-    }
-
-    // ─────────────────────────────────────────────
-    // STREAM CHECK
-    // ─────────────────────────────────────────────
-
-    if (!response.body) {
-      throw new Error('Streaming response unavailable.')
-    }
-
-    setStep(3)
-
-    // ─────────────────────────────────────────────
-    // STREAM READER
-    // ─────────────────────────────────────────────
-
-    const reader = response.body.getReader()
-
-    const decoder = new TextDecoder()
-
-    let fullText = ''
-
-    while (true) {
-      const { done, value } = await reader.read()
-
-      if (done) {
-        console.log('STREAM COMPLETE')
-        break
+      if (!response.body) {
+        throw new Error('Streaming response unavailable.')
       }
 
-      // decode chunk
-      const chunk = decoder.decode(value, {
-        stream: true,
+      setStep(3)
+
+      updateLiveReview(liveReviewId, {
+        progress: 35,
       })
 
-      console.log('STREAM CHUNK:', chunk)
+      const reader = response.body.getReader()
 
-      // accumulate
-      fullText += chunk
+      const decoder = new TextDecoder()
 
-      // SSE events separated by double newline
-      const events = fullText.split('\n\n')
+      let fullText = ''
 
-      // keep incomplete event
-      fullText = events.pop() || ''
+      while (true) {
+        const { done, value } = await reader.read()
 
-      for (const event of events) {
-        // find data line
-        const line = event
-          .split('\n')
-          .find((l) => l.startsWith('data: '))
+        if (done) break
 
-        if (!line) continue
+        const chunk = decoder.decode(value, {
+          stream: true,
+        })
 
-        try {
-          const payload = JSON.parse(
-            line.replace(/^data:\s*/, '')
-          )
+        fullText += chunk
 
-          console.log('PAYLOAD:', payload)
+        const events = fullText.split('\n\n')
 
-          // progress text
-          if (payload.chunk) {
-            setStreamText((prev) => {
-              return prev + payload.chunk
-            })
-          }
+        fullText = events.pop() || ''
 
-          // progress step
-          if (payload.step) {
-            setStep(payload.step)
-          }
+        for (const event of events) {
+          const line = event
+            .split('\n')
+            .find((l) => l.startsWith('data: '))
 
-          // final result
-          if (payload.result) {
-            console.log(
-              'FINAL RESULT:',
-              payload.result
+          if (!line) continue
+
+          try {
+            const payload = JSON.parse(
+              line.replace(/^data:\s*/, '')
             )
 
-            setResult(payload.result)
+            if (payload.chunk) {
+              setStreamText((prev) => prev + payload.chunk)
+            }
 
-            setStreamText('')
+            if (payload.step) {
+              setStep(payload.step)
 
-            setStep(6)
+              updateLiveReview(liveReviewId, {
+                progress: Math.min(payload.step * 18, 90),
+              })
+            }
+
+            if (payload.result) {
+              const finalScore = calculateScore(
+                payload.result.checks || []
+              )
+
+              setResult({
+                ...payload.result,
+                score: finalScore,
+              })
+
+              setStreamText('')
+
+              setStep(6)
+
+              /* ============================================
+                 FINAL LIVE DASHBOARD UPDATE
+              ============================================ */
+
+              updateLiveReview(liveReviewId, {
+                status: 'complete',
+                progress: 100,
+                score: finalScore,
+              })
+            }
+
+            if (payload.error) {
+              throw new Error(payload.error)
+            }
+          } catch (parseErr) {
+            console.error('SSE parse error:', parseErr)
           }
-
-          // backend error
-          if (payload.error) {
-            throw new Error(payload.error)
-          }
-        } catch (parseErr) {
-          console.error(
-            'SSE parse error:',
-            parseErr
-          )
         }
       }
+    } catch (err: any) {
+      console.error('Review error:', err)
+
+      const message = err?.message ?? ''
+
+      updateLiveReview(liveReviewId, {
+        status: 'failed',
+        progress: 100,
+      })
+
+      if (
+        message === 'The operation was aborted.' ||
+        message.includes('aborted')
+      ) {
+        setError(
+          'Review timed out after 180 seconds.'
+        )
+      } else {
+        setError(message || 'Review failed.')
+      }
+    } finally {
+      clearTimeout(timeoutId)
+
+      if (timerRef.current) {
+        clearInterval(timerRef.current)
+      }
+
+      setLoading(false)
+      setStep(0)
     }
-  } catch (err: any) {
-    console.error('Review error:', err)
-
-    const message = err?.message ?? ''
-
-    if (
-      message === 'The operation was aborted.' ||
-      message.includes('aborted')
-    ) {
-      setError(
-        'Review timed out after 180 seconds.'
-      )
-    } else {
-      setError(message || 'Review failed.')
-    }
-  } finally {
-    clearTimeout(timeoutId)
-
-    if (timerRef.current) {
-      clearInterval(timerRef.current)
-    }
-
-    setLoading(false)
-    setStep(0)
   }
-}
-
-// done
 
   /* ==========================================================================
      RESET
@@ -717,7 +702,9 @@ export default function SOAAnalysisPage() {
   return (
     <div className="space-y-6 animate-fade-in max-w-5xl">
       <div>
-        <h1 className="page-header">SOA Analysis</h1>
+        <h1 className="page-header bg-gradient-to-r from-white to-slate-400 bg-clip-text text-transparent">
+          SOA Analysis
+        </h1>
 
         <p className="page-sub">
           AI-powered SOA compliance review.
@@ -767,11 +754,10 @@ export default function SOAAnalysisPage() {
       {/* RUN */}
 
       {!result && (
-        <div className="card space-y-4">
+        <div className="card space-y-4 border border-slate-800/80 bg-gradient-to-b from-[#11111d] to-[#0B0B14] shadow-2xl shadow-black/30">
           {error && (
             <div className="flex gap-2 items-start p-3 rounded-lg bg-[#FF6B6B]/10 border border-[#FF6B6B]/20 text-sm text-[#FF6B6B]">
               <AlertCircle size={14} />
-
               {error}
             </div>
           )}
@@ -781,7 +767,7 @@ export default function SOAAnalysisPage() {
               <button
                 onClick={() => runReview('quick')}
                 disabled={!soaDoc}
-                className="relative flex flex-col gap-2 p-5 rounded-xl border-2 border-[#6B2FD9]/40 bg-[#6B2FD9]/5 hover:bg-[#6B2FD9]/10 transition-all disabled:opacity-30"
+                className="relative flex flex-col gap-2 p-5 rounded-2xl border-2 border-[#6B2FD9]/40 bg-[#6B2FD9]/5 hover:bg-[#6B2FD9]/10 transition-all hover:scale-[1.02] disabled:opacity-30"
               >
                 <div className="flex items-center gap-2">
                   <Zap size={16} className="text-[#A78BFA]" />
@@ -801,7 +787,7 @@ export default function SOAAnalysisPage() {
               <button
                 onClick={() => runReview('full')}
                 disabled={!soaDoc}
-                className="relative flex flex-col gap-2 p-5 rounded-xl border-2 border-[#6B2FD9] bg-[#6B2FD9]/10 hover:bg-[#6B2FD9]/15 transition-all disabled:opacity-30"
+                className="relative flex flex-col gap-2 p-5 rounded-2xl border-2 border-[#6B2FD9] bg-[#6B2FD9]/10 hover:bg-[#6B2FD9]/15 transition-all hover:scale-[1.02] disabled:opacity-30"
               >
                 <div className="flex items-center gap-2">
                   <Play size={16} className="text-[#A78BFA]" />
@@ -830,6 +816,17 @@ export default function SOAAnalysisPage() {
                 </span>
               </div>
 
+              {/* PREMIUM PROGRESS BAR */}
+
+              <div className="w-full h-2 rounded-full bg-slate-800 overflow-hidden">
+                <div
+                  className="h-full bg-gradient-to-r from-[#6B2FD9] to-[#A78BFA] transition-all duration-500"
+                  style={{
+                    width: `${Math.min(step * 18, 100)}%`,
+                  }}
+                />
+              </div>
+
               <div className="space-y-2">
                 {activeSteps.map((s, i) => {
                   const done = i + 1 < step
@@ -838,7 +835,7 @@ export default function SOAAnalysisPage() {
                   return (
                     <div
                       key={s}
-                      className={`flex items-center gap-2 text-xs ${
+                      className={`flex items-center gap-2 text-xs transition-all ${
                         done
                           ? 'text-[#2DD4A0]'
                           : active
@@ -864,7 +861,7 @@ export default function SOAAnalysisPage() {
               </div>
 
               {streamText && (
-                <pre className="bg-[#0B0B14] border border-slate-800 rounded-xl p-4 text-xs text-slate-400 font-mono overflow-auto max-h-48 whitespace-pre-wrap">
+                <pre className="bg-[#0B0B14] border border-slate-800 rounded-xl p-4 text-xs text-slate-400 font-mono overflow-auto max-h-48 whitespace-pre-wrap animate-fade-in">
                   {streamText}
                 </pre>
               )}
