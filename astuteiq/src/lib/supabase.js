@@ -1,8 +1,27 @@
-// Supabase client — configure VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in .env
-// ⚠️  The anon key is safe to expose client-side; it is scoped by Row Level Security.
-//     Never expose your service_role key here.
+// src/lib/supabase.ts
 import { createClient } from '@supabase/supabase-js';
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL ?? 'https://placeholder.supabase.co';
-const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY ?? 'placeholder-anon-key';
-export const supabase = createClient(supabaseUrl, supabaseKey);
+/* ============================================================================
+   ENV VARIABLES
+============================================================================ */
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
+const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
+/* ============================================================================
+   VALIDATION
+============================================================================ */
+if (!SUPABASE_URL) {
+    throw new Error('Missing VITE_SUPABASE_URL in .env');
+}
+if (!SUPABASE_ANON_KEY) {
+    throw new Error('Missing VITE_SUPABASE_ANON_KEY in .env');
+}
+/* ============================================================================
+   CLIENT
+============================================================================ */
+const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+    auth: {
+        persistSession: true,
+        autoRefreshToken: true,
+        detectSessionInUrl: true,
+    },
+});
 export default supabase;

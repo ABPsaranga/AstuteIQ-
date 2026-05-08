@@ -20,7 +20,7 @@ import {
 import StatusBadge from '../components/ui/StatusBadge'
 import type { ReviewStatus } from '../features/reviews/types'
 import supabase from '../lib/supabase'
-import { useLiveDashboardStore } from '../store/liveDashboardStore'
+import { useReviewStore } from '../store/liveReviewStore'
 
 /* ============================================================================
    TYPES
@@ -404,10 +404,10 @@ export default function SOAAnalysisPage() {
   ========================================================================== */
 
   const addLiveReview =
-    useLiveDashboardStore((s) => s.addReview)
+    useReviewStore((s) => s.addReview)
 
   const updateLiveReview =
-    useLiveDashboardStore((s) => s.updateReview)
+    useReviewStore((s) => s.updateReview)
 
   /* ==========================================================================
      FILE DROPS

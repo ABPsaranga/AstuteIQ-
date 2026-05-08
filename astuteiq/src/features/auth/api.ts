@@ -1,4 +1,4 @@
-﻿import { supabase } from '@/lib/supabase'
+import supabase from '@/lib/supabase'
 import type { AuthUser } from './store'
 
 interface LoginPayload    { email: string; password: string }

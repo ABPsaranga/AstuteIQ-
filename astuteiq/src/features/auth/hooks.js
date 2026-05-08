@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuthStore } from './store';
 import { loginApi, forgotPasswordApi, resetPasswordApi } from './api';
-import { supabase } from '../../lib/supabase';
+import supabase from '../../lib/supabase';
 import toast from 'react-hot-toast';
 export function useLogin() {
     const [loading, setLoading] = useState(false);
