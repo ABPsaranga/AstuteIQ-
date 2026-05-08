@@ -462,162 +462,234 @@ export default function SOAAnalysisPage() {
   ========================================================================== */
 
   async function runReview(reviewMode: 'quick' | 'full') {
-    if (!soaDoc) {
-      setError('Please upload an SOA.')
-      return
-    }
+  if (!soaDoc) {
+    setError('Please upload an SOA.')
+    return
+  }
 
-    setLoading(true)
-    setMode(reviewMode)
+  setLoading(true)
+  setMode(reviewMode)
 
-    setError(null)
-    setResult(null)
-    setElapsed(0)
-    setStep(1)
-    setStreamText('')
+  setError(null)
+  setResult(null)
+  setElapsed(0)
+  setStep(1)
+  setStreamText('')
 
-    timerRef.current = setInterval(() => {
-      setElapsed((e) => e + 1)
-    }, 1000)
+  timerRef.current = setInterval(() => {
+    setElapsed((e) => e + 1)
+  }, 1000)
 
-    const controller = new AbortController()
+  const controller = new AbortController()
 
-    abortRef.current = controller
+  abortRef.current = controller
 
-    const timeoutId = setTimeout(() => {
-      controller.abort()
-    }, 180000)
+  const timeoutId = setTimeout(() => {
+    controller.abort()
+  }, 180000)
 
-    try {
-      const documents = [
-        soaDoc,
-        ...(refDoc ? [refDoc] : []),
-        ...suppDocs,
-      ].map((d) => ({
-        type: d.docType,
-        label: d.label,
-        content: d.content,
-      }))
+  try {
+    // ─────────────────────────────────────────────
+    // PREPARE DOCUMENTS
+    // ─────────────────────────────────────────────
 
-      setStep(2)
+    const documents = [
+      soaDoc,
+      ...(refDoc ? [refDoc] : []),
+      ...suppDocs,
+    ].map((d) => ({
+      type: d.docType,
+      label: d.label,
+      content: d.content,
+    }))
 
-      const { data } = await supabase.auth.getSession()
+    setStep(2)
 
-      const token = data.session?.access_token ?? ''
+    // ─────────────────────────────────────────────
+    // AUTH
+    // ─────────────────────────────────────────────
 
-      const BASE_URL =
-        import.meta.env.VITE_API_BASE_URL ??
-        import.meta.env.VITE_API_URL ??
-        'http://127.0.0.1:8001'
+    const { data } = await supabase.auth.getSession()
 
-      const response = await fetch(
-        `${BASE_URL}/api/soa/review/stream`,
-        {
-          method: 'POST',
+    const token = data.session?.access_token ?? ''
 
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${token}`,
-          },
+    // ─────────────────────────────────────────────
+    // BASE URL
+    // ─────────────────────────────────────────────
 
-          body: JSON.stringify({
-            mode: reviewMode,
-            documents,
-          }),
+    const BASE_URL =
+      import.meta.env.VITE_API_BASE_URL ??
+      import.meta.env.VITE_API_URL ??
+      'http://127.0.0.1:8001'
 
-          signal: controller.signal,
-        }
-      )
+    // ─────────────────────────────────────────────
+    // REQUEST
+    // ─────────────────────────────────────────────
 
-      if (!response.ok) {
-        let message = `Server error ${response.status}`
+    const response = await fetch(
+      `${BASE_URL}/api/soa/review/stream`,
+      {
+        method: 'POST',
 
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+
+        body: JSON.stringify({
+          mode: reviewMode,
+          documents,
+        }),
+
+        signal: controller.signal,
+      }
+    )
+
+    // ─────────────────────────────────────────────
+    // ERROR HANDLING
+    // ─────────────────────────────────────────────
+
+    if (!response.ok) {
+      let message = `Server error ${response.status}`
+
+      try {
+        const err = await response.json()
+
+        message = err.detail ?? message
+      } catch {
         try {
-          const err = await response.json()
-
-          message = err.detail ?? message
+          message = await response.text()
         } catch {
           //
         }
-
-        throw new Error(message)
       }
 
-      if (!response.body) {
-        throw new Error('Streaming response unavailable.')
+      throw new Error(message)
+    }
+
+    // ─────────────────────────────────────────────
+    // STREAM CHECK
+    // ─────────────────────────────────────────────
+
+    if (!response.body) {
+      throw new Error('Streaming response unavailable.')
+    }
+
+    setStep(3)
+
+    // ─────────────────────────────────────────────
+    // STREAM READER
+    // ─────────────────────────────────────────────
+
+    const reader = response.body.getReader()
+
+    const decoder = new TextDecoder()
+
+    let fullText = ''
+
+    while (true) {
+      const { done, value } = await reader.read()
+
+      if (done) {
+        console.log('STREAM COMPLETE')
+        break
       }
 
-      setStep(3)
+      // decode chunk
+      const chunk = decoder.decode(value, {
+        stream: true,
+      })
 
-      const reader = response.body.getReader()
+      console.log('STREAM CHUNK:', chunk)
 
-      const decoder = new TextDecoder()
+      // accumulate
+      fullText += chunk
 
-      let buffer = ''
+      // SSE events separated by double newline
+      const events = fullText.split('\n\n')
 
-      while (true) {
-        const { done, value } = await reader.read()
+      // keep incomplete event
+      fullText = events.pop() || ''
 
-        if (done) break
+      for (const event of events) {
+        // find data line
+        const line = event
+          .split('\n')
+          .find((l) => l.startsWith('data: '))
 
-        buffer += decoder.decode(value, {
-          stream: true,
-        })
+        if (!line) continue
 
-        const lines = buffer.split('\n')
+        try {
+          const payload = JSON.parse(
+            line.replace(/^data:\s*/, '')
+          )
 
-        buffer = lines.pop() ?? ''
+          console.log('PAYLOAD:', payload)
 
-        for (const line of lines) {
-          if (!line.startsWith('data: ')) continue
-
-          try {
-            const payload = JSON.parse(line.slice(6))
-
-            if (payload.error) {
-              throw new Error(payload.error)
-            }
-
-            if (payload.chunk) {
-              setStreamText((prev) => prev + payload.chunk)
-            }
-
-            if (payload.done && payload.result) {
-              setStep(6)
-
-              setResult(payload.result)
-
-              setStreamText('')
-            }
-          } catch (err) {
-            console.error('Stream parse error:', err)
+          // progress text
+          if (payload.chunk) {
+            setStreamText((prev) => {
+              return prev + payload.chunk
+            })
           }
+
+          // progress step
+          if (payload.step) {
+            setStep(payload.step)
+          }
+
+          // final result
+          if (payload.result) {
+            console.log(
+              'FINAL RESULT:',
+              payload.result
+            )
+
+            setResult(payload.result)
+
+            setStreamText('')
+
+            setStep(6)
+          }
+
+          // backend error
+          if (payload.error) {
+            throw new Error(payload.error)
+          }
+        } catch (parseErr) {
+          console.error(
+            'SSE parse error:',
+            parseErr
+          )
         }
       }
-    } catch (err: any) {
-      console.error(err)
-
-      if (
-        err?.message === 'The operation was aborted.' ||
-        err?.message?.includes('aborted')
-      ) {
-        setError(
-          'Review timed out after 180 seconds.'
-        )
-      } else {
-        setError(err?.message ?? 'Review failed.')
-      }
-    } finally {
-      clearTimeout(timeoutId)
-
-      if (timerRef.current) {
-        clearInterval(timerRef.current)
-      }
-
-      setLoading(false)
-      setStep(0)
     }
+  } catch (err: any) {
+    console.error('Review error:', err)
+
+    const message = err?.message ?? ''
+
+    if (
+      message === 'The operation was aborted.' ||
+      message.includes('aborted')
+    ) {
+      setError(
+        'Review timed out after 180 seconds.'
+      )
+    } else {
+      setError(message || 'Review failed.')
+    }
+  } finally {
+    clearTimeout(timeoutId)
+
+    if (timerRef.current) {
+      clearInterval(timerRef.current)
+    }
+
+    setLoading(false)
+    setStep(0)
   }
+}
 
   /* ==========================================================================
      RESET
