@@ -410,67 +410,191 @@ export default function SOAAnalysisPage() {
   }, [suppDocs])
 
   async function runReview(m: 'quick' | 'full') {
-    if (!soaDoc) { setError('Please upload the SOA to review.'); return }
-    setMode(m)
-    reviewIdRef.current = `soa_${Date.now()}`
-    setLoading(true); setError(null); setResult(null)
-    setFeedbackMap({}); setStep(1); setElapsed(0); setStreamText('')
-    timerRef.current = setInterval(() => setElapsed((e) => e + 1), 1000)
+  if (!soaDoc) {
+    setError('Please upload the SOA to review.')
+    return
+  }
 
-    // 180s timeout — full review with regulatory ATO checks can take up to 2min
-    const controller  = new AbortController()
-    abortRef.current  = controller
-    const timeoutId   = setTimeout(() => controller.abort(), 180_000)
+  setMode(m)
+  reviewIdRef.current = `soa_${Date.now()}`
+  setLoading(true)
+  setError(null)
+  setResult(null)
+  setFeedbackMap({})
+  setStep(1)
+  setElapsed(0)
+  setStreamText('')
 
-    try {
-      const documents = [soaDoc, ...(refDoc ? [refDoc] : []), ...suppDocs]
-        .map((d) => ({ type: d.docType, label: d.label, content: d.content }))
-      setStep(2)
-      const { data } = await supabase.auth.getSession()
-      const token    = data.session?.access_token ?? ''
-      const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? import.meta.env.VITE_API_URL ?? 'http://127.0.0.1:8001/api'
-      const response = await fetch(`${BASE_URL}/soa/review/stream`, {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-        body:    JSON.stringify({ mode: m, documents }),
-        signal:  controller.signal,
-      })
-      if (!response.ok) {
-        const err = await response.json().catch(() => ({}))
-        throw new Error((err as { detail?: string }).detail ?? `Server error ${response.status}`)
+  timerRef.current = setInterval(() => {
+    setElapsed((e) => e + 1)
+  }, 1000)
+
+  // 180 second timeout
+  const controller = new AbortController()
+  abortRef.current = controller
+
+  const timeoutId = setTimeout(() => {
+    controller.abort()
+  }, 180000)
+
+  try {
+    // ─────────────────────────────────────────────
+    // Prepare documents
+    // ─────────────────────────────────────────────
+
+    const documents = [
+      soaDoc,
+      ...(refDoc ? [refDoc] : []),
+      ...suppDocs,
+    ].map((d) => ({
+      type: d.docType,
+      label: d.label,
+      content: d.content,
+    }))
+
+    setStep(2)
+
+    // ─────────────────────────────────────────────
+    // Get auth token
+    // ─────────────────────────────────────────────
+
+    const { data } = await supabase.auth.getSession()
+
+    const token = data.session?.access_token ?? ''
+
+    // ─────────────────────────────────────────────
+    // Backend URL
+    // IMPORTANT:
+    // DO NOT include /api here
+    // ─────────────────────────────────────────────
+
+    const BASE_URL =
+      import.meta.env.VITE_API_BASE_URL ??
+      import.meta.env.VITE_API_URL ??
+      'http://127.0.0.1:8001'
+
+    // ─────────────────────────────────────────────
+    // Correct endpoint
+    // ─────────────────────────────────────────────
+
+    const response = await fetch(
+      `${BASE_URL}/api/soa/review/stream`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          mode: m,
+          documents,
+        }),
+        signal: controller.signal,
       }
-      const reader  = response.body!.getReader()
-      const decoder = new TextDecoder()
-      let   buffer  = ''
-      setStep(3)
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-        buffer += decoder.decode(value, { stream: true })
-        const lines = buffer.split('\n')
-        buffer = lines.pop() ?? ''
-        for (const line of lines) {
-          if (!line.startsWith('data: ')) continue
-          const payload = JSON.parse(line.slice(6))
-          if (payload.error) throw new Error(payload.error)
-          if (payload.chunk) setStreamText((prev) => prev + payload.chunk)
-          if (payload.done && payload.result) { setStep(6); setResult(payload.result); setStreamText('') }
+    )
+
+    // ─────────────────────────────────────────────
+    // Better error handling
+    // ─────────────────────────────────────────────
+
+    if (!response.ok) {
+      let errorMessage = `Server error ${response.status}`
+
+      try {
+        const err = await response.json()
+        errorMessage = err.detail ?? errorMessage
+      } catch {
+        try {
+          errorMessage = await response.text()
+        } catch {
+          // ignore
         }
       }
-    } catch (err: unknown) {
-      const msg = (err as { message?: string })?.message ?? ''
-      // AbortError means we hit the 180s timeout — still wait, don't show as failure
-      if (msg === 'The operation was aborted.' || msg.includes('aborted')) {
-        setError('Review timed out after 180 seconds. The server may still be processing — try again with a shorter document.')
-      } else {
-        setError(msg || 'Review failed.')
-      }
-    } finally {
-      clearTimeout(timeoutId)
-      if (timerRef.current) clearInterval(timerRef.current)
-      setLoading(false); setStep(0)
+
+      throw new Error(errorMessage)
     }
+
+    // ─────────────────────────────────────────────
+    // Ensure stream exists
+    // ─────────────────────────────────────────────
+
+    if (!response.body) {
+      throw new Error('Streaming response not supported.')
+    }
+
+    // ─────────────────────────────────────────────
+    // Read stream
+    // ─────────────────────────────────────────────
+
+    const reader = response.body.getReader()
+
+    const decoder = new TextDecoder()
+
+    let buffer = ''
+
+    setStep(3)
+
+    while (true) {
+      const { done, value } = await reader.read()
+
+      if (done) break
+
+      buffer += decoder.decode(value, { stream: true })
+
+      const lines = buffer.split('\n')
+
+      buffer = lines.pop() ?? ''
+
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue
+
+        try {
+          const payload = JSON.parse(line.slice(6))
+
+          if (payload.error) {
+            throw new Error(payload.error)
+          }
+
+          if (payload.chunk) {
+            setStreamText((prev) => prev + payload.chunk)
+          }
+
+          if (payload.done && payload.result) {
+            setStep(6)
+            setResult(payload.result)
+            setStreamText('')
+          }
+        } catch (parseError) {
+          console.error('Stream parse error:', parseError)
+        }
+      }
+    }
+  } catch (err: any) {
+    console.error('Review error:', err)
+
+    const msg = err?.message ?? ''
+
+    if (
+      msg === 'The operation was aborted.' ||
+      msg.includes('aborted')
+    ) {
+      setError(
+        'Review timed out after 180 seconds. Try again with a smaller document.'
+      )
+    } else {
+      setError(msg || 'Review failed.')
+    }
+  } finally {
+    clearTimeout(timeoutId)
+
+    if (timerRef.current) {
+      clearInterval(timerRef.current)
+    }
+
+    setLoading(false)
+    setStep(0)
   }
+}
 
   function reset() {
     setSoaDoc(null); setRefDoc(null); setSuppDocs([])
