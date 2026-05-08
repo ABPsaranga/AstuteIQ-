@@ -1,7 +1,7 @@
 import axios from 'axios';
 // ⚠️  Security note: in production, never expose the Anthropic API key client-side.
 // This base URL should point to your own backend which holds the key server-side.
-const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'import.meta.env.VITE_API_URL';
+const BASE_URL = import.meta.env.VITE_API_URL ?? 'import.meta.env.VITE_API_URL';
 const apiClient = axios.create({
     baseURL: BASE_URL,
     timeout: 30000,
