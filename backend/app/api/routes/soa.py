@@ -361,7 +361,7 @@ async def run_review(payload: ReviewPayload, user: dict = Depends(get_current_us
         return _mock_result(payload)
 
 
-@router.post("/api/soa/review/stream")
+@router.post("/review/stream")
 async def stream_review(payload: ReviewPayload, user: dict = Depends(get_current_user)):
     api_key = os.getenv("ANTHROPIC_API_KEY")
 
