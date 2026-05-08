@@ -1,42 +1,88 @@
-import axios from 'axios'
+// src/lib/api.ts
 
-// ⚠️  Security note: in production, never expose the Anthropic API key client-side.
-// This base URL should point to your own backend which holds the key server-side.
-const BASE_URL = import.meta.env.VITE_API_URL ?? 'import.meta.env.VITE_API_URL'
+import axios from 'axios'
+import supabase from './supabase'
+
+/* ============================================================================
+   API BASE URL
+============================================================================ */
+
+const API_BASE =
+  import.meta.env.VITE_API_BASE_URL ??
+  import.meta.env.VITE_API_URL ??
+  'http://127.0.0.1:8001'
+
+/* ============================================================================
+   AXIOS INSTANCE
+============================================================================ */
 
 const apiClient = axios.create({
-  baseURL: BASE_URL,
-  timeout: 30_000,
-  headers: { 'Content-Type': 'application/json' },
+  baseURL: `${API_BASE}/api`,
+  timeout: 5400000, // 3 min for streaming / SOA reviews
+  headers: {
+    'Content-Type': 'application/json',
+  },
 })
 
-// ─── Request interceptor: attach JWT ─────────────────────────────────────────
-apiClient.interceptors.request.use((config) => {
-  // Pull token from persisted Zustand store (localStorage)
-  try {
-    const raw   = localStorage.getItem('astuteiq-auth')
-    const state = raw ? JSON.parse(raw) : null
-    const token = state?.state?.token
+/* ============================================================================
+   REQUEST INTERCEPTOR
+   Attach Supabase JWT automatically
+============================================================================ */
 
-    if (token) {
-      config.headers.Authorization = `Bearer ${token}`
+apiClient.interceptors.request.use(
+  async (config) => {
+    try {
+      const { data } = await supabase.auth.getSession()
+
+      const token = data.session?.access_token
+
+      if (token) {
+        config.headers.Authorization = `Bearer ${token}`
+      }
+    } catch (err) {
+      console.error('Auth interceptor error:', err)
     }
-  } catch {
-    // Swallow parse errors — request continues without auth header
-  }
-  return config
-})
 
-// ─── Response interceptor: handle 401 globally ───────────────────────────────
+    return config
+  },
+
+  (error) => {
+    return Promise.reject(error)
+  }
+)
+
+/* ============================================================================
+   RESPONSE INTERCEPTOR
+============================================================================ */
+
 apiClient.interceptors.response.use(
-  (res) => res,
-  (err) => {
-    if (err.response?.status === 401) {
-      // Clear auth and redirect — avoid circular import by using window
-      localStorage.removeItem('astuteiq-auth')
+  (response) => response,
+
+  async (error) => {
+    const status = error.response?.status
+
+    // Unauthorized
+    if (status === 401) {
+      try {
+        await supabase.auth.signOut()
+      } catch {
+        //
+      }
+
       window.location.href = '/login'
     }
-    return Promise.reject(err)
+
+    // Timeout
+    if (error.code === 'ECONNABORTED') {
+      console.error('Request timeout')
+    }
+
+    // Server unavailable
+    if (!error.response) {
+      console.error('Backend unreachable')
+    }
+
+    return Promise.reject(error)
   }
 )
 
