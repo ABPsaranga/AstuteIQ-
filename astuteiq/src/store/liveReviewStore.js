@@ -3,20 +3,40 @@ export const useReviewStore = create((set) => ({
     reviews: [],
     processing: false,
     lastUpdated: Date.now(),
-    setProcessing: (v) => set({ processing: v }),
-    addReview: (r) => set((state) => ({
-        reviews: [r, ...state.reviews.filter((x) => x.id !== r.id)],
+    addReview: (review) => set((state) => ({
+        reviews: [
+            review,
+            ...state.reviews.filter((r) => r.id !== review.id),
+        ],
+        processing: true,
         lastUpdated: Date.now(),
-        processing: r.status === 'processing',
     })),
-    updateReview: (id, patch) => set((state) => ({
-        reviews: state.reviews.map((r) => r.id === id ? { ...r, ...patch } : r),
+    updateReview: (id, updates) => set((state) => {
+        const reviews = state.reviews.map((r) => r.id === id
+            ? {
+                ...r,
+                ...updates,
+            }
+            : r);
+        const processing = reviews.some((r) => r.status === 'processing');
+        return {
+            reviews,
+            processing,
+            lastUpdated: Date.now(),
+        };
+    }),
+    removeReview: (id) => set((state) => {
+        const reviews = state.reviews.filter((r) => r.id !== id);
+        const processing = reviews.some((r) => r.status === 'processing');
+        return {
+            reviews,
+            processing,
+            lastUpdated: Date.now(),
+        };
+    }),
+    clearReviews: () => set({
+        reviews: [],
+        processing: false,
         lastUpdated: Date.now(),
-        processing: patch.status === 'processing'
-            ? true
-            : patch.status === 'complete' || patch.status === 'failed'
-                ? false
-                : state.processing,
-    })),
-    clearReviews: () => set({ reviews: [], lastUpdated: Date.now() }),
+    }),
 }));

@@ -1,44 +1,70 @@
 import supabase from '@/lib/supabase';
+/* ───────────────── LOGIN ───────────────── */
 export async function loginApi(payload) {
     const { data, error } = await supabase.auth.signInWithPassword({
         email: payload.email,
         password: payload.password,
     });
-    if (error || !data.session)
+    if (error || !data.session || !data.user) {
         throw new Error(error?.message ?? 'Login failed.');
+    }
     const user = {
         id: data.user.id,
         email: data.user.email ?? '',
-        name: data.user.user_metadata?.name ?? data.user.email ?? '',
-        role: data.user.user_metadata?.role ?? 'user',
+        name: data.user.user_metadata?.name ??
+            data.user.email ??
+            '',
+        role: data.user.user_metadata?.role ??
+            'user',
     };
-    return { user, token: data.session.access_token };
+    return {
+        user,
+        token: data.session.access_token,
+    };
 }
+/* ───────────────── REGISTER ───────────────── */
 export async function registerApi(payload) {
+    const role = payload.role ?? 'user';
     const { data, error } = await supabase.auth.signUp({
         email: payload.email,
         password: payload.password,
-        options: { data: { name: payload.name, role: 'user' } },
+        options: {
+            data: {
+                name: payload.name,
+                role,
+                practice: payload.practice ?? '',
+            },
+        },
     });
-    if (error || !data.session)
+    if (error || !data.user) {
         throw new Error(error?.message ?? 'Registration failed.');
+    }
     const user = {
         id: data.user.id,
         email: data.user.email ?? '',
         name: payload.name,
-        role: 'user',
+        role,
     };
-    return { user, token: data.session.access_token };
+    return {
+        user,
+        token: data.session?.access_token ?? '',
+    };
 }
+/* ───────────────── FORGOT PASSWORD ───────────────── */
 export async function forgotPasswordApi(email) {
     const { error } = await supabase.auth.resetPasswordForEmail(email, {
         redirectTo: `${window.location.origin}/reset-password`,
     });
-    if (error)
+    if (error) {
         throw new Error(error.message);
+    }
 }
+/* ───────────────── RESET PASSWORD ───────────────── */
 export async function resetPasswordApi(_token, password) {
-    const { error } = await supabase.auth.updateUser({ password });
-    if (error)
+    const { error } = await supabase.auth.updateUser({
+        password,
+    });
+    if (error) {
         throw new Error(error.message);
+    }
 }

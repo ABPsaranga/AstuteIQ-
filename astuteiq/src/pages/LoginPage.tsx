@@ -1,31 +1,9 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useLogin } from '../features/auth/hooks'
-import { Eye, EyeOff, ShieldCheck, User } from 'lucide-react'
-
-type Role = 'user' | 'admin'
-
-const ROLES: { value: Role; label: string; desc: string; icon: typeof User; color: string; border: string }[] = [
-  {
-    value:  'user',
-    label:  'Paraplanner',
-    desc:   'Run reviews & export reports',
-    icon:   User,
-    color:  'text-[#A78BFA]',
-    border: 'border-[#6B2FD9] bg-[#6B2FD9]/10',
-  },
-  {
-    value:  'admin',
-    label:  'Admin',
-    desc:   'Manage practice & team access',
-    icon:   ShieldCheck,
-    color:  'text-[#2DD4A0]',
-    border: 'border-[#2DD4A0] bg-[#2DD4A0]/10',
-  },
-]
+import { Eye, EyeOff } from 'lucide-react'
 
 export default function LoginPage() {
-  const [role, setRole]         = useState<Role>('user')
   const [email, setEmail]       = useState('')
   const [password, setPassword] = useState('')
   const [showPw, setShowPw]     = useState(false)
@@ -35,8 +13,6 @@ export default function LoginPage() {
     e.preventDefault()
     login(email, password)
   }
-
-  const active = ROLES.find((r) => r.value === role)!
 
   return (
     <div
@@ -64,44 +40,11 @@ export default function LoginPage() {
           <p className="text-slate-500 text-sm">AI-powered compliance review</p>
         </div>
 
-        {/* Role selector */}
-        <div className="grid grid-cols-2 gap-2">
-          {ROLES.map(({ value, label, desc, icon: Icon, color, border }) => (
-            <button
-              key={value}
-              type="button"
-              onClick={() => setRole(value)}
-              className={`flex flex-col items-center gap-2 p-4 rounded-2xl border-2 transition-all duration-150 ${
-                role === value
-                  ? border
-                  : 'border-slate-800 bg-[#0f0f1a] hover:border-slate-600'
-              }`}
-            >
-              <div
-                className={`p-2 rounded-xl ${
-                  role === value ? 'bg-white/10' : 'bg-slate-800'
-                }`}
-              >
-                <Icon size={16} className={role === value ? color : 'text-slate-500'} />
-              </div>
-              <div className="text-center">
-                <p className={`text-xs font-semibold ${role === value ? 'text-white' : 'text-slate-400'}`}>
-                  {label}
-                </p>
-                <p className="text-xs text-slate-600 mt-0.5">{desc}</p>
-              </div>
-            </button>
-          ))}
-        </div>
-
         {/* Form card */}
         <div className="rounded-2xl border border-slate-800 bg-[#0f0f1a] p-6 space-y-4 shadow-2xl">
-          <div className="flex items-center gap-2 mb-1">
-            <active.icon size={14} className={active.color} />
-            <h2 className="text-sm font-semibold text-white">
-              Sign in as {active.label}
-            </h2>
-          </div>
+          <h2 className="text-sm font-semibold text-white mb-4">
+            Sign in to your account
+          </h2>
 
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
@@ -109,7 +52,7 @@ export default function LoginPage() {
               <input
                 type="email"
                 className="input"
-                placeholder={role === 'admin' ? 'admin@practice.com.au' : 'you@practice.com.au'}
+                placeholder="your@practice.com.au"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 required
@@ -152,15 +95,13 @@ export default function LoginPage() {
               disabled={loading}
               className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl font-semibold text-sm text-white transition-all duration-150 disabled:opacity-50"
               style={{
-                background: role === 'admin' ? '#1a4a3a' : '#6B2FD9',
-                border: role === 'admin' ? '1px solid rgba(45,212,160,0.3)' : 'none',
-                color: role === 'admin' ? '#2DD4A0' : 'white',
+                background: '#6B2FD9',
               }}
             >
               {loading ? (
                 <span className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin" />
               ) : (
-                `Sign in as ${active.label}`
+                'Sign in'
               )}
             </button>
           </form>

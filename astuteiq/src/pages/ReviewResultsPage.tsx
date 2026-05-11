@@ -98,26 +98,25 @@ const normalizeOverrides = (overrides: unknown[]): FindingOverride[] => {
 
   // ================= EXPORT =================
   function handleExport() {
+    const reportDate = safeReview.completedAt || safeReview.createdAt || new Date().toISOString()
+
     exportDocx({
       clientName: safeReview.fileName || 'Client',
-      adviser: 'Adviser',
+      adviser: safeReview.userId || 'Adviser',
       reviewer: 'AstuteIQ Engine',
-      date: safeReview.completedAt
-        ? format(new Date(safeReview.completedAt), 'dd MMM yyyy')
-        : 'N/A',
+      date: format(new Date(reportDate), 'dd MMM yyyy'),
+      riskLevel: safeReview.status === 'complete' ? 'LOW' : 'MEDIUM',
+      documentsReviewed: [safeReview.fileName],
 
       findings: findings.map((f) => ({
         section: f.category || 'General',
         title: f.title,
-        status:
-          f.status === 'PASS'
-            ? 'PASS'
-            : f.status === 'FAIL'
-            ? 'FAIL'
-            : 'WARN',
-        issue: f.message,
+        status: f.status === 'PASS' ? 'PASS' : f.status === 'FAIL' ? 'FAIL' : 'WARN',
+        issue: f.message || 'No issue identified',
         recommendation:
-          'Review and update to meet ASIC compliance requirements',
+          f.status === 'PASS'
+            ? 'No action required'
+            : 'Review and update this section to meet compliance standards',
       })),
     })
   }

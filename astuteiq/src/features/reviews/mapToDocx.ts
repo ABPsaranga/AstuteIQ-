@@ -2,18 +2,23 @@ import type { ReportData } from '../reviews/exportPdf'
 
 export function mapReviewToDocx(review: any): ReportData {
   return {
-    clientName: review.clientName || 'Unknown Client',
-    adviser: review.adviser || 'Unknown Adviser',
+    clientName: review.fileName || 'Unknown Client',
+    adviser: review.userId || 'Unknown Adviser',
     reviewer: 'AI Compliance Engine',
-    date: new Date(review.createdAt).toLocaleDateString(),
+    date: review.completedAt
+      ? new Date(review.completedAt).toLocaleDateString()
+      : new Date(review.createdAt).toLocaleDateString(),
 
-    findings: review.checks.map((c: any) => ({
-      section: c.section || 'General Compliance',
-      title: c.name,
-      status: c.status,
-      issue: c.status === 'PASS' ? 'No issue identified' : c.message,
+    documentsReviewed: review.fileName ? [review.fileName] : [],
+    riskLevel: review.status === 'complete' ? 'LOW' : 'MEDIUM',
+
+    findings: (review.findings || []).map((f: any) => ({
+      section: f.category || 'General',
+      title: f.title || f.checkId || 'Review item',
+      status: f.status === 'PASS' ? 'PASS' : f.status === 'FAIL' ? 'FAIL' : 'WARN',
+      issue: f.message || 'No issue identified',
       recommendation:
-        c.status === 'PASS'
+        f.status === 'PASS'
           ? 'No action required'
           : 'Review and update this section to meet compliance standards',
     })),

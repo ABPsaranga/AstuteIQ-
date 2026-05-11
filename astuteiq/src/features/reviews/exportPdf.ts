@@ -28,6 +28,10 @@ export type ReportData = {
   adviser: string
   reviewer: string
   date: string
+  practice?: string
+  adviceType?: string
+  riskLevel?: string
+  documentsReviewed?: string[]
   findings: Finding[]
 }
 
@@ -46,24 +50,91 @@ function statusLabel(status: string) {
 }
 
 function calculateRisk(findings: Finding[]) {
-  const fail = findings.filter(f => f.status === 'FAIL').length
-  const warn = findings.filter(f => f.status === 'WARN').length
+  const fail = findings.filter((f) => f.status === 'FAIL').length
+  const warn = findings.filter((f) => f.status === 'WARN').length
 
-  if (fail > 2) return 'HIGH RISK'
-  if (fail > 0 || warn > 2) return 'MEDIUM RISK'
-  return 'LOW RISK'
+  if (fail > 2) return 'HIGH'
+  if (fail > 0 || warn > 2) return 'MEDIUM'
+  return 'LOW'
+}
+
+function countStatuses(findings: Finding[]) {
+  return {
+    pass: findings.filter((f) => f.status === 'PASS').length,
+    warn: findings.filter((f) => f.status === 'WARN').length,
+    fail: findings.filter((f) => f.status === 'FAIL').length,
+    na: 0,
+  }
+}
+
+function getRiskLevel(report: ReportData) {
+  return report.riskLevel || calculateRisk(report.findings)
+}
+
+function getDocumentsReviewed(report: ReportData) {
+  return report.documentsReviewed && report.documentsReviewed.length > 0
+    ? report.documentsReviewed
+    : [report.clientName]
+}
+
+function buildOverallAssessment(findings: Finding[]) {
+  const passCount = findings.filter((f) => f.status === 'PASS').length
+  const warnCount = findings.filter((f) => f.status === 'WARN').length
+  const failCount = findings.filter((f) => f.status === 'FAIL').length
+
+  const items = [
+    {
+      label: 'CONSISTENCY',
+      text: `Reviews document consistency across recommendations and disclosures. ${passCount >= warnCount ? 'Consistent controls are in place' : 'Some sections require alignment with client needs and disclosures.'}`,
+    },
+    {
+      label: 'STRUCTURE',
+      text: `Evaluates the report layout and logical flow. ${failCount === 0 ? 'Structure is generally sound.' : 'There are structural weaknesses in failed sections.'}`,
+    },
+    {
+      label: 'PERSONALISATION',
+      text: `Assesses client-specific content and tailoring. ${warnCount === 0 ? 'Personalisation is strong.' : 'Some areas may not be sufficiently tailored to the client.'}`,
+    },
+    {
+      label: 'COMPLIANCE',
+      text: `Assesses compliance against regulatory obligations. ${failCount > 0 ? 'There are compliance failures that require remediation.' : 'Most compliance checks are satisfactory with only warnings.'}`,
+    },
+  ]
+
+  return items.flatMap((item) => [
+    new Paragraph({
+      text: item.label,
+      heading: HeadingLevel.HEADING_2,
+    }),
+    new Paragraph({ text: item.text }),
+  ])
+}
+
+function buildReviewerFeedback(findings: Finding[]) {
+  const flagged = findings.filter((f) => f.status !== 'PASS')
+  if (flagged.length === 0) return []
+
+  return [
+    new Paragraph({
+      text: 'Reviewer feedback summary',
+      heading: HeadingLevel.HEADING_2,
+    }),
+    new Paragraph({
+      text: `The review identified ${flagged.length} flagged checks. Findings require human verification and remediation before the report is finalised.`,
+    }),
+  ]
 }
 
 /* ================= EXPORT ================= */
 
 export async function exportDocx(report: ReportData) {
-  const risk = calculateRisk(report.findings)
+  const riskLevel = getRiskLevel(report)
+  const counts = countStatuses(report.findings)
 
   const doc = new Document({
     sections: [
       {
         children: [
-
           new Paragraph({
             text: 'Statement of Advice Compliance Audit Report',
             heading: HeadingLevel.TITLE,
@@ -80,41 +151,43 @@ export async function exportDocx(report: ReportData) {
 
           new Paragraph({ text: '' }),
 
-          new Paragraph({ text: `Client: ${report.clientName}` }),
-          new Paragraph({ text: `Adviser: ${report.adviser}` }),
-          new Paragraph({ text: `Reviewer: ${report.reviewer}` }),
-          new Paragraph({ text: `Date: ${report.date}` }),
-
+          buildCoverTable(report, riskLevel),
           new Paragraph({ text: '' }),
 
           new Paragraph({
-            text: 'Executive Summary',
+            text: 'Score summary',
             heading: HeadingLevel.HEADING_1,
           }),
-
-          new Paragraph({
-            children: [
-              new TextRun({
-                text: `Overall Risk Rating: ${risk}`,
-                bold: true,
-              }),
-            ],
-          }),
-
-          new Paragraph({
-            text:
-              'This report assesses compliance against best interest duty, fee disclosure, and client suitability obligations.',
-          }),
-
+          buildScoreSummary(counts),
           new Paragraph({ text: '' }),
 
           new Paragraph({
-            text: 'Detailed Findings',
+            text: 'Overall assessment',
             heading: HeadingLevel.HEADING_1,
           }),
+          ...buildOverallAssessment(report.findings),
+          new Paragraph({ text: '' }),
 
+          new Paragraph({
+            text: 'AI disclaimer',
+            heading: HeadingLevel.HEADING_2,
+          }),
+          new Paragraph({
+            text: 'This report is generated by AI and requires human verification before any advice is issued. Confirm all findings and conclusions against the original source documents.',
+          }),
+          new Paragraph({ text: '' }),
+
+          ...buildReviewerFeedback(report.findings),
+          report.findings.some((f) => f.status !== 'PASS')
+            ? new Paragraph({ text: '' })
+            : new Paragraph({ text: '' }),
+
+          new Paragraph({
+            text: 'Detailed findings',
+            heading: HeadingLevel.HEADING_1,
+          }),
           ...buildSections(report.findings),
-        ],
+        ].flat(),
       },
     ],
   })
@@ -122,6 +195,72 @@ export async function exportDocx(report: ReportData) {
   const blob = await Packer.toBlob(doc)
   saveAs(blob, `ASIC_Compliance_Report_${Date.now()}.docx`)
 }
+
+function buildCoverTable(report: ReportData, riskLevel: string) {
+  const rows: [string, string][] = [
+    ['Client name', report.clientName],
+    ['Adviser', report.adviser],
+    ['Practice', report.practice ?? 'N/A'],
+    ['Advice type', report.adviceType ?? 'N/A'],
+    ['Date', report.date],
+    ['Risk level', riskLevel],
+    ['Documents reviewed', getDocumentsReviewed(report).join(', ')],
+  ]
+
+  return new Table({
+    width: { size: 100, type: WidthType.PERCENTAGE },
+    rows: rows.map(([label, value]) =>
+      new TableRow({
+        children: [
+          new TableCell({
+            children: [
+              new Paragraph({
+                children: [new TextRun({ text: label, bold: true })],
+              }),
+            ],
+            shading: { fill: 'f3f4f6' },
+          }),
+          new TableCell({
+            children: [new Paragraph(value)],
+          }),
+        ],
+      })
+    ),
+  })
+}
+
+function buildScoreSummary(counts: { pass: number; warn: number; fail: number; na: number }) {
+  const items = [
+    { label: 'PASS', value: counts.pass, color: '2ecc71' },
+    { label: 'WARNING', value: counts.warn, color: 'f1c40f' },
+    { label: 'FAIL', value: counts.fail, color: 'e74c3c' },
+    { label: 'N/A', value: counts.na, color: '6b7280' },
+  ]
+
+  return new Table({
+    width: { size: 100, type: WidthType.PERCENTAGE },
+    rows: [
+      new TableRow({
+        children: items.map((item) =>
+          new TableCell({
+            children: [
+              new Paragraph({
+                alignment: AlignmentType.CENTER,
+                children: [
+                  new TextRun({ text: item.value.toString(), bold: true, size: 28 }),
+                  new TextRun({ text: `\n${item.label}`, break: 1 }),
+                ],
+              }),
+            ],
+            shading: { fill: item.color },
+          })
+        ),
+      }),
+    ],
+  })
+}
+
+/* ================= SECTION BUILDER ================= */
 
 /* ================= SECTION BUILDER ================= */
 
