@@ -22,9 +22,10 @@ app.add_middleware(
         "http://localhost:3000",
         "https://astute-iq-nsjv-oh0y0v37f-astuteiq.vercel.app",
         "https://astute-iq-nsjv.vercel.app",
-
+        "https://astuteiq.io",
+        "https://www.astuteiq.io",
     ],
-    allow_origin_regex=r"https://.*\.vercel\.app",
+    # allow_origin_regex=r"https://.*\.vercel\.app|https://.*\.hostinger\.com",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
