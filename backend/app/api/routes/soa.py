@@ -7,9 +7,10 @@ Tools: web_search_20250305
 
 import os
 import json
+import asyncio
 from typing import Any, cast
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
@@ -18,12 +19,11 @@ from anthropic.types import (
     MessageParam,
 )
 
-from app.core.deps import get_current_user
-
 router = APIRouter()
 
 _MODEL = "claude-sonnet-4-6"
-_MAX_TOKENS = 12_000
+_MAX_TOKENS = 8000
+_MAX_DOC_CHARS = 45000
 
 # -------------------------------------------------------------------
 # Anthropic tool definition
@@ -251,8 +251,8 @@ Conduct a comprehensive SOA compliance review.
         else:
 
             content = (
-                doc.content[:120_000]
-                if len(doc.content) > 120_000
+                doc.content[:_MAX_DOC_CHARS]
+                if len(doc.content) > _MAX_DOC_CHARS
                 else doc.content
             )
 
@@ -260,18 +260,6 @@ Conduct a comprehensive SOA compliance review.
                 "type": "text",
                 "text": f"--- {doc.label} ---\n{content}",
             })
-
-    print("\n================ DOCUMENT DEBUG ================\n")
-
-    for doc in payload.documents:
-        print(f"LABEL: {doc.label}")
-        print(f"TYPE : {doc.type}")
-        print(f"LENGTH: {len(doc.content)}")
-
-        preview = doc.content[:1000] if doc.content else "EMPTY"
-
-        print(f"PREVIEW:\n{preview}")
-        print("\n-----------------------------------------------\n")
 
     return parts
 
@@ -282,9 +270,6 @@ Conduct a comprehensive SOA compliance review.
 
 
 def _extract_text_from_response(content_blocks: list) -> str:
-    """
-    Return the last text block from Claude response.
-    """
 
     text_blocks = [
         block.text
@@ -296,9 +281,6 @@ def _extract_text_from_response(content_blocks: list) -> str:
 
 
 def _parse_json_from_text(text: str) -> dict[str, Any] | None:
-    """
-    Extract and parse the outermost JSON object from text.
-    """
 
     start = text.find("{")
     end = text.rfind("}") + 1
@@ -320,7 +302,12 @@ def _parse_json_from_text(text: str) -> dict[str, Any] | None:
 # -------------------------------------------------------------------
 
 
-def _run_with_tools(
+# -------------------------------------------------------------------
+# Blocking tool loop
+# -------------------------------------------------------------------
+
+
+async def _run_with_tools(
     client: Any,
     system: str,
     messages: list[MessageParam],
@@ -333,12 +320,14 @@ def _run_with_tools(
 
     for _ in range(6):
 
-        response = client.messages.create(
-            model=_MODEL,
-            max_tokens=_MAX_TOKENS,
-            system=system,
-            tools=[_WEB_SEARCH_TOOL],
-            messages=current_messages,
+        response = await asyncio.to_thread(
+            lambda: client.messages.create(
+                model=_MODEL,
+                max_tokens=_MAX_TOKENS,
+                system=system,
+                tools=[_WEB_SEARCH_TOOL],
+                messages=current_messages,
+            )
         )
 
         print(f"[soa/review] stop_reason = {response.stop_reason}")
@@ -368,21 +357,15 @@ def _run_with_tools(
         break
 
     return None
-
-
 # -------------------------------------------------------------------
 # Blocking endpoint
 # -------------------------------------------------------------------
 
 
 @router.post("/soa/review")
-async def run_review(
-    payload: ReviewPayload,
-):
+async def run_review(payload: ReviewPayload):
 
     api_key = os.getenv("ANTHROPIC_API_KEY")
-
-    print(f"[soa/review] API key exists: {bool(api_key)}")
 
     if not api_key:
         return {
@@ -398,7 +381,10 @@ async def run_review(
             for d in payload.documents
         )
 
-        client = anthropic.Anthropic(api_key=api_key)
+        client = anthropic.Anthropic(
+            api_key=api_key,
+            timeout=600.0,
+        )
 
         messages = cast(
             list[MessageParam],
@@ -413,10 +399,13 @@ async def run_review(
         print(f"[soa/review] mode = {payload.mode}")
         print(f"[soa/review] documents = {len(payload.documents)}")
 
-        result = _run_with_tools(
-            client=client,
-            system=_build_system_prompt(payload.mode, has_ref),
-            messages=messages,
+        result = await asyncio.wait_for(
+            _run_with_tools(
+                client=client,
+                system=_build_system_prompt(payload.mode, has_ref),
+                messages=messages,
+            ),
+            timeout=600,
         )
 
         print(f"[soa/review] parsed result = {result}")
@@ -427,6 +416,12 @@ async def run_review(
             }
 
         return result
+
+    except asyncio.TimeoutError:
+
+        return {
+            "error": "Review timed out after 10 minutes",
+        }
 
     except Exception as exc:
 
@@ -443,9 +438,7 @@ async def run_review(
 
 
 @router.post("/soa/review/stream")
-async def stream_review(
-    payload: ReviewPayload,
-):
+async def stream_review(payload: ReviewPayload):
 
     api_key = os.getenv("ANTHROPIC_API_KEY")
 
@@ -471,7 +464,10 @@ async def stream_review(
 
         system = _build_system_prompt(payload.mode, has_ref)
 
-        client = anthropic.Anthropic(api_key=api_key)
+        client = anthropic.Anthropic(
+            api_key=api_key,
+            timeout=600.0,
+        )
 
         messages = cast(
             list[MessageParam],
@@ -516,10 +512,6 @@ async def stream_review(
 
                 if stop_reason == "end_turn":
 
-                    print(
-                        f"[soa/review/stream] accumulated:\n{accumulated}"
-                    )
-
                     result = _parse_json_from_text(accumulated)
 
                     if result:
@@ -539,7 +531,7 @@ async def stream_review(
 
                 if stop_reason == "tool_use":
 
-                    chunk_text = 'Fetching live ATO thresholds...\n'
+                    chunk_text = "Fetching live ATO thresholds...\n"
 
                     yield (
                         f"data: {json.dumps({'chunk': chunk_text})}\n\n"
