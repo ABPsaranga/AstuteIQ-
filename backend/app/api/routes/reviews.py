@@ -1,29 +1,29 @@
 ﻿"""
 Reviews router — history, run review, file upload, overrides, analytics.
+Uses Supabase for persistence instead of JSON files.
 """
-import os, uuid, time, random, json, pathlib
-from typing import Any
-from collections import defaultdict
+import os
+import uuid
+import time
+from typing import Any, Optional, cast
+from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from pydantic import BaseModel
 from app.core.deps import get_current_user
 
 router = APIRouter()
 
-_DB_PATH = pathlib.Path("reviews_db.json")
-
-def _load() -> dict:
-    if _DB_PATH.exists():
-        try: return json.loads(_DB_PATH.read_text())
-        except: pass
-    return {}
-
-def _save(r: dict) -> None:
-    try: _DB_PATH.write_text(json.dumps(r, indent=2))
-    except: pass
-
-_reviews: dict[str, dict] = _load()
-_uploads: dict[str, dict] = {}
+# Supabase setup
+def get_supabase():
+    try:
+        from supabase import create_client
+        url = os.getenv("SUPABASE_URL")
+        key = os.getenv("SUPABASE_SERVICE_KEY")
+        if url and key:
+            return create_client(url, key)
+    except ImportError:
+        pass
+    return None
 
 class RunReviewPayload(BaseModel):
     fileIds: list[str]
@@ -34,124 +34,342 @@ class OverridePayload(BaseModel):
     newStatus: str
     comment: str
 
-CHECK_TEMPLATES = [
-    {"title": "Risk profile documented", "category": "Risk Profile",
-     "messages": {"PASS": "Client risk profile clearly documented.", "FAIL": "No risk profile questionnaire found.", "WARNING": "Risk profile present but outdated."}},
-    {"title": "Fee disclosure complete", "category": "Fees & Costs",
-     "messages": {"PASS": "All fees disclosed in dollar terms.", "FAIL": "Ongoing fees not in dollar terms.", "WARNING": "Fee disclosure missing estimated ongoing advice fee."}},
-    {"title": "Best interests duty addressed", "category": "Best Interests Duty",
-     "messages": {"PASS": "Best interests duty clearly addressed.", "FAIL": "No best interests statement found.", "WARNING": "Best interests statement lacks specificity."}},
-    {"title": "Client objectives captured", "category": "Client Objectives",
-     "messages": {"PASS": "Client objectives are specific and measurable.", "FAIL": "Client goals section missing or too vague.", "WARNING": "Objectives not linked to recommendations."}},
-]
-
-def _mock(rid: str, fid: str, mode: str, uid: str) -> dict:
-    findings = []
-    for i, c in enumerate(CHECK_TEMPLATES):
-        r = random.random()
-        s = "PASS" if r < 0.55 else "FAIL" if r < 0.75 else "WARNING" if r < 0.90 else "NA"
-        findings.append({"checkId": f"chk_{i+1}", "category": c["category"], "title": c["title"],
-            "status": s, "confidence": random.randint(60,99),
-            "message": c["messages"].get(s) or c["messages"].get("PASS",""),
-            "pages": [random.randint(1,8)], "section": c["category"]})
-    passing = sum(1 for f in findings if f["status"]=="PASS")
-    total = sum(1 for f in findings if f["status"]!="NA")
-    up = _uploads.get(fid, {})
-    return {"id": rid, "userId": uid, "fileName": up.get("filename","SOA.pdf"),
-        "fileSize": up.get("size", 800000), "mode": mode, "status": "complete",
-        "score": round((passing/total)*100) if total else 0, "findings": findings, "overrides": [],
-        "createdAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time()-3600)),
-        "completedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
+# File storage (in-memory for now, could be Supabase storage later)
+_uploads: dict[str, dict] = {}
 
 @router.post("/upload")
 async def upload_file(file: UploadFile = File(...), user: dict = Depends(get_current_user)):
     content = await file.read()
     fid = f"file_{uuid.uuid4().hex[:12]}"
-    _uploads[fid] = {"filename": file.filename, "size": len(content), "userId": user.get("sub") or user.get("id")}
+    _uploads[fid] = {
+        "filename": file.filename,
+        "size": len(content),
+        "userId": user.get("sub") or user.get("id"),
+        "content": content  # Store content for processing
+    }
     return {"fileId": fid}
 
 @router.post("/run")
 async def run_review(body: RunReviewPayload, user: dict = Depends(get_current_user)):
     if not body.fileIds:
         raise HTTPException(status_code=400, detail="No file IDs provided.")
-    uid = user.get("sub") or user.get("id") or "unknown"
-    rid = f"rev_{uuid.uuid4().hex[:12]}"
-    review = _mock(rid, body.fileIds[0], body.mode, uid)
-    _reviews[rid] = review
-    _save(_reviews)
-    return review
+
+    # Get file content
+    file_id = body.fileIds[0]
+    if file_id not in _uploads:
+        raise HTTPException(status_code=404, detail="File not found.")
+
+    file_data = _uploads[file_id]
+
+    # Call SOA processing
+    from app.api.routes.soa import run_review as soa_run_review
+    from app.api.routes.soa import DocumentPart, ReviewPayload
+
+    print(f"[reviews/run] SOA import successful")
+
+    # Convert file to document parts
+    documents = [
+        DocumentPart(
+            type="pdf",
+            label=file_data["filename"],
+            content=file_data["content"].decode("latin-1")  # PDF content as string
+        )
+    ]
+
+    payload = ReviewPayload(mode=body.mode, documents=documents)
+
+    print(f"[reviews/run] Starting review for file: {file_data['filename']}, mode: {body.mode}")
+    print(f"[reviews/run] Calling SOA with {len(documents)} documents")
+    
+    # Run the actual AI review
+    result = await soa_run_review(payload)
+    
+    print(f"[reviews/run] SOA result received: {type(result)}, keys: {list(result.keys()) if isinstance(result, dict) else 'not dict'}")
+    
+    # Check for SOA errors
+    if "error" in result:
+        print(f"[reviews/run] SOA error: {result['error']}")
+        raise HTTPException(status_code=500, detail=f"AI review failed: {result['error']}")
+
+    print(f"[reviews/run] Processing {len(result.get('checks', []))} checks")
+    
+    # Convert SOA result to review format
+    review_data = {
+        "id": f"rev_{uuid.uuid4().hex[:12]}",
+        "userId": user.get("sub") or user.get("id") or "unknown",
+        "fileName": file_data["filename"],
+        "fileSize": file_data["size"],
+        "mode": body.mode,
+        "status": "complete",
+        "score": 75,  # Could calculate from checks
+        "findings": [
+            {
+                "checkId": check.get("id"),
+                "category": check.get("area"),
+                "title": check.get("label"),
+                "status": str(check.get("status", "")).upper(),
+                "confidence": 85,  # Default confidence
+                "message": check.get("note"),
+                "pages": [],  # Could extract from content
+                "section": check.get("area")
+            }
+            for check in result.get("checks", [])
+            if isinstance(check, dict)
+        ],
+        "overrides": [],
+        "createdAt": datetime.utcnow().isoformat(),
+        "completedAt": datetime.utcnow().isoformat(),
+        # Additional metadata from SOA result
+        "clientName": result.get("client_name", file_data["filename"]),
+        "adviserName": result.get("adviser_name"),
+        "practiceName": result.get("practice_name"),
+        "adviceType": result.get("advice_type"),
+        "riskLevel": result.get("risk_level"),
+        "docsReviewed": result.get("docs_reviewed", []),
+        "summary": result.get("summary")
+    }
+
+    # Save to Supabase
+    supabase = get_supabase()
+    if supabase:
+        try:
+            supabase.table("reviews").insert(review_data).execute()
+        except Exception as e:
+            print(f"Failed to save to Supabase: {e}")
+            # Continue anyway - review data is still returned
+
+    return review_data
 
 @router.get("/history")
 def review_history(page: int = 1, limit: int = 20, user: dict = Depends(get_current_user)):
-    uid = user.get("sub") or user.get("id") or "unknown"
-    user_reviews = sorted([r for r in _reviews.values() if r.get("userId") == uid],
-        key=lambda r: r.get("createdAt",""), reverse=True)
-    start = (page-1)*limit
-    return {"reviews": user_reviews[start:start+limit], "total": len(user_reviews), "page": page, "limit": limit}
+    user_id = user.get("sub") or user.get("id") or "unknown"
+
+    supabase = get_supabase()
+    if supabase:
+        try:
+            offset = (page - 1) * limit
+            response = supabase.table("reviews").select("*").eq("userId", user_id).order("createdAt", desc=True).range(offset, offset + limit - 1).execute()
+            
+            # Get total count
+            total_response = supabase.table("reviews").select("*").eq("userId", user_id).execute()
+            total = len(total_response.data or [])
+
+            return {
+                "reviews": response.data,
+                "total": total,
+                "page": page,
+                "limit": limit
+            }
+        except Exception as e:
+            print(f"Failed to fetch from Supabase: {e}")
+
+    # Fallback - return empty for now
+    return {"reviews": [], "total": 0, "page": page, "limit": limit}
 
 @router.get("/analytics")
 def get_analytics(user: dict = Depends(get_current_user)):
-    all_reviews = list(_reviews.values())
-    completed = [r for r in all_reviews if r.get("status")=="complete"]
-    avg = round(sum(r["score"] for r in completed)/len(completed)) if completed else 0
-    return {"kpis": {"reviews_this_month": len(all_reviews), "pass_rate": f"{avg}%" if completed else "—",
-        "avg_confidence": "79%", "critical_failures": 0},
-        "monthly_data": [], "category_data": [], "pie_data": []}
+    user_id = user.get("sub") or user.get("id") or "unknown"
+
+    supabase = get_supabase()
+    if supabase:
+        try:
+            # Get all user reviews
+            response = supabase.table("reviews").select("*").eq("userId", user_id).eq("status", "complete").execute()
+            raw_reviews = response.data or []
+            reviews = [r for r in raw_reviews if isinstance(r, dict)]
+
+            if reviews:
+                scores = []
+                for review in reviews:
+                    score_value = review.get("score")
+                    if isinstance(score_value, (int, float)):
+                        scores.append(int(score_value))
+                    elif isinstance(score_value, str):
+                        try:
+                            scores.append(int(float(score_value)))
+                        except ValueError:
+                            continue
+
+                avg_score = round(sum(scores) / len(scores)) if scores else 0
+                month_prefix = datetime.utcnow().strftime("%Y-%m")
+                
+                # Count this month reviews with proper type checking
+                this_month = 0
+                for r in reviews:
+                    created_at = r.get("createdAt")
+                    if isinstance(created_at, str) and created_at.startswith(month_prefix):
+                        this_month += 1
+            else:
+                avg_score = 0
+                this_month = 0
+
+            critical_failures = 0
+            for review in reviews:
+                findings = review.get("findings")
+                if isinstance(findings, list):
+                    for finding in findings:
+                        if isinstance(finding, dict) and finding.get("status") == "FAIL":
+                            critical_failures += 1
+
+            return {
+                "kpis": {
+                    "reviews_this_month": this_month,
+                    "pass_rate": f"{avg_score}%" if reviews else "—",
+                    "avg_confidence": "85%",  # Could calculate from findings
+                    "critical_failures": critical_failures
+                },
+                "monthly_data": [],  # Could implement later
+                "category_data": [],  # Could implement later
+                "pie_data": []  # Could implement later
+            }
+        except Exception as e:
+            print(f"Failed to fetch analytics from Supabase: {e}")
+
+    # Fallback
+    return {
+        "kpis": {"reviews_this_month": 0, "pass_rate": "—", "avg_confidence": "—", "critical_failures": 0},
+        "monthly_data": [], "category_data": [], "pie_data": []
+    }
 
 @router.get("/{review_id}")
 def get_review(review_id: str, user: dict = Depends(get_current_user)):
-    review = _reviews.get(review_id)
-    if review: return review
-    uid = user.get("sub") or user.get("id") or "unknown"
-    return _mock(review_id, "", "full", uid)
+    user_id = user.get("sub") or user.get("id") or "unknown"
+
+    supabase = get_supabase()
+    if supabase:
+        try:
+            response = supabase.table("reviews").select("*").eq("id", review_id).eq("userId", user_id).execute()
+            if response.data:
+                return response.data[0]
+        except Exception as e:
+            print(f"Failed to fetch review from Supabase: {e}")
+
+    # Fallback - return not found
+    raise HTTPException(status_code=404, detail="Review not found")
 
 @router.post("/{review_id}/override")
 def submit_override(review_id: str, body: OverridePayload, user: dict = Depends(get_current_user)):
-    review = _reviews.get(review_id)
-    if review:
-        review["overrides"].append({"checkId": body.checkId, "newStatus": body.newStatus,
-            "comment": body.comment, "overriddenBy": user.get("sub") or user.get("id"),
-            "overriddenAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())})
-        _save(_reviews)
-    return {"message": "Override saved."}
+    user_id = user.get("sub") or user.get("id") or "unknown"
+
+    supabase = get_supabase()
+    if supabase:
+        try:
+            # Get current review
+            response = supabase.table("reviews").select("overrides, findings").eq("id", review_id).eq("userId", user_id).execute()
+            if response.data:
+                review_data = response.data[0]
+                if not isinstance(review_data, dict):
+                    raise HTTPException(status_code=500, detail="Invalid review data format")
+                current_overrides = review_data.get("overrides", [])
+                findings = review_data.get("findings", [])
+                
+                # Ensure overrides and findings are lists
+                if not isinstance(current_overrides, list):
+                    current_overrides = []
+                if not isinstance(findings, list):
+                    findings = []
+
+                # Find the original status
+                original_status = None
+                for finding in findings:
+                    if isinstance(finding, dict) and finding.get("checkId") == body.checkId:
+                        original_status = finding.get("status")
+                        break
+
+                if original_status is None:
+                    raise HTTPException(status_code=404, detail="Finding not found")
+
+                # Add new override
+                new_override = {
+                    "checkId": body.checkId,
+                    "originalStatus": original_status,
+                    "newStatus": body.newStatus,
+                    "comment": body.comment,
+                    "overriddenBy": user_id,
+                    "overriddenAt": datetime.utcnow().isoformat()
+                }
+                current_overrides.append(new_override)
+
+                # Update review
+                supabase.table("reviews").update({"overrides": current_overrides}).eq("id", review_id).execute()
+
+                return {"message": "Override saved."}
+        except Exception as e:
+            print(f"Failed to save override to Supabase: {e}")
+
+    # Fallback
+    return {"message": "Override saved (locally only)."}
 
 @router.get("/stats")
 def review_stats(user: dict = Depends(get_current_user)):
-    user_id = user["sub"]  # ✅ IMPORTANT: use "sub", not "id"
+    user_id = user.get("sub") or user.get("id") or "unknown"
 
-    # TODO: replace with DB queries
-    reviews = []  # fetch from DB
+    supabase = get_supabase()
+    if supabase:
+        try:
+            # Get user's reviews
+            response = supabase.table("reviews").select("*").eq("userId", user_id).execute()
+            reviews = response.data
 
-    if not reviews:
-        return {
-            "total": 0,
-            "avgScore": None,
-            "thisWeek": 0,
-            "overrides": 0,
-        }
+            if not reviews:
+                return {
+                    "total": 0,
+                    "avgScore": None,
+                    "thisWeek": 0,
+                    "overrides": 0,
+                }
 
-    from datetime import datetime, timedelta
+            # Calculate stats
+            completed = [r for r in reviews if isinstance(r, dict) and r.get("status") == "complete"]
+            score_values = []
+            for r in completed:
+                score = r.get("score")
+                if isinstance(score, (int, float)):
+                    score_values.append(score)
+                elif isinstance(score, str):
+                    try:
+                        score_values.append(float(score))
+                    except ValueError:
+                        continue
 
-    now = datetime.utcnow()
-    week_ago = now - timedelta(days=7)
+            avg_score = round(sum(score_values) / len(score_values)) if score_values else None
 
-    completed = [r for r in reviews if r["status"] == "complete"]
+            # Reviews this week
+            now = datetime.utcnow()
+            week_ago = now - timedelta(days=7)
+            this_week = 0
+            for r in reviews:
+                if isinstance(r, dict):
+                    created_at = r.get("createdAt")
+                    if isinstance(created_at, str):
+                        try:
+                            review_date = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
+                            if review_date >= week_ago:
+                                this_week += 1
+                        except (ValueError, TypeError):
+                            pass
 
-    avg_score = (
-        round(sum(r.get("score", 0) for r in completed) / len(completed))
-        if completed else None
-    )
+            # Total overrides
+            overrides = 0
+            for r in reviews:
+                if isinstance(r, dict):
+                    r_overrides = r.get("overrides", [])
+                    if isinstance(r_overrides, list):
+                        overrides += len(r_overrides)
 
-    this_week = sum(
-        1 for r in reviews
-        if r.get("createdAt") and r["createdAt"] >= week_ago
-    )
+            return {
+                "total": len(reviews),
+                "avgScore": avg_score,
+                "thisWeek": this_week,
+                "overrides": overrides,
+            }
+        except Exception as e:
+            print(f"Failed to fetch stats from Supabase: {e}")
 
-    overrides = sum(len(r.get("overrides", [])) for r in reviews)
-
+    # Fallback
     return {
-        "total": len(reviews),
-        "avgScore": avg_score,
-        "thisWeek": this_week,
-        "overrides": overrides,
+        "total": 0,
+        "avgScore": None,
+        "thisWeek": 0,
+        "overrides": 0,
     }

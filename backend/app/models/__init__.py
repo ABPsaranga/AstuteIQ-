@@ -1,2 +1,1 @@
-from .user_profile import User
-from .review import _reviews
+# Models package - currently empty, using Supabase for data persistence

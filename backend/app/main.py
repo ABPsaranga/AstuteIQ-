@@ -1,18 +1,21 @@
 from dotenv import load_dotenv
 load_dotenv()
 
+import os
+print(f"[startup] ANTHROPIC_API_KEY loaded: {bool(os.getenv('ANTHROPIC_API_KEY'))}")
+print(f"[startup] API key prefix: {os.getenv('ANTHROPIC_API_KEY', '')[:20] if os.getenv('ANTHROPIC_API_KEY') else 'None'}")
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-# ✅ IMPORTANT: correct imports
-from app.api.routes import reviews, soa, auth, feedback
+from app.api.routes import reviews, soa, feedback, auth
 
 app = FastAPI(
     title="AstuteIQ API",
-    version="1.0.0"
+    version="1.0.0",
 )
 
-# ── CORS ─────────────────────────────
+# ── CORS ─────────────────────────────────────────────────────────────────────
 
 app.add_middleware(
     CORSMiddleware,
@@ -25,25 +28,28 @@ app.add_middleware(
         "https://astuteiq.io",
         "https://www.astuteiq.io",
     ],
-    # allow_origin_regex=r"https://.*\.vercel\.app|https://.*\.hostinger\.com",
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "Accept"],
 )
 
-# ── ROUTERS ─────────────────────────
+# ── ROUTERS ──────────────────────────────────────────────────────────────────
 
-app.include_router(auth.router, prefix="/api/auth", tags=["Auth"])   # 👈 ADD TAG
-app.include_router(reviews.router, prefix="/api/reviews", tags=["Reviews"])
-app.include_router(soa.router, prefix="/api", tags=["SOA"])
+app.include_router(auth.router,     prefix="/api", tags=["Auth"])
+app.include_router(reviews.router,  prefix="/api/reviews", tags=["Reviews"])
+app.include_router(soa.router,      prefix="/api", tags=["SOA"])
 app.include_router(feedback.router, prefix="/api", tags=["Feedback"])
 
-# ── ROOT ────────────────────────────
+# ── HEALTH ───────────────────────────────────────────────────────────────────
 
 @app.get("/")
 def root():
-    return {"message": "AstuteIQ API running"}
+    return {"status": "ok", "service": "AstuteIQ API"}
 
 @app.get("/api/health")
 def health():
-    return {"status": "ok"}
+    return {
+        "status":                    "ok",
+        "anthropic_key_configured":  bool(os.getenv("ANTHROPIC_API_KEY")),
+        "supabase_url_configured":   bool(os.getenv("SUPABASE_URL")),
+    }

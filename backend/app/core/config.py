@@ -1,20 +1,31 @@
+"""
+Central config — all environment variables loaded via pydantic-settings.
+Add new env vars here; never read os.getenv() directly in route files.
+"""
 from pydantic_settings import BaseSettings
 
+
 class Settings(BaseSettings):
-    SUPABASE_URL: str = ""
-    SUPABASE_KEY: str = ""
-    SUPABASE_JWT_SECRET: str = ""
-    DATABASE_URL: str = ""
-    GOOGLE_CLIENT_ID: str = ""
+    # Anthropic
     ANTHROPIC_API_KEY: str = ""
-    OPENAI_API_KEY: str = ""
-    SECRET_KEY: str = ""
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 30  # or your preferred expiry
-    ALGORITHM: str = "HS256"
+
+    # Supabase
+    SUPABASE_URL:              str = ""
+    SUPABASE_ANON_KEY:         str = ""
+    SUPABASE_JWT_SECRET:       str = ""
+
+    # Required for server-side admin operations (invite, user management).
+    # Never expose this key to the frontend.
+    SUPABASE_SERVICE_ROLE_KEY: str = ""
+
+    # App
+    SECRET_KEY:  str = "change-me-in-production"
+    ENVIRONMENT: str = "development"
 
     class Config:
-        env_file = ".env"
+        env_file        = ".env"
         env_file_encoding = "utf-8"
-        extra = "ignore"  # ← silently ignore any extra .env vars not listed above
+        extra           = "ignore"
+
 
 settings = Settings()
