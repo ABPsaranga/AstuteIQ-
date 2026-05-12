@@ -22,7 +22,7 @@ from app.core.deps import get_current_user
 
 router = APIRouter()
 
-_MODEL = "claude-3-7-sonnet-20250219"
+_MODEL = "claude-sonnet-4-6"
 _MAX_TOKENS = 12_000
 
 # -------------------------------------------------------------------
