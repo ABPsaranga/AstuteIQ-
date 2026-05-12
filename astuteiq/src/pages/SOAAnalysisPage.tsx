@@ -1385,7 +1385,10 @@ export default function SOAAnalysisPage() {
       const useBackend = true
       console.log('ENV URL >>>', import.meta.env.VITE_API_BASE_URL)
       console.log('ENV URL 2 >>>', import.meta.env.VITE_API_URL)
-      const BASE_URL = 'http://127.0.0.1:8000'
+      const BASE_URL =
+      import.meta.env.VITE_API_BASE_URL ??
+      import.meta.env.VITE_API_URL ??
+      'http://127.0.0.1:8000'
 
       console.log('FINAL BASE_URL >>>', BASE_URL)
 
