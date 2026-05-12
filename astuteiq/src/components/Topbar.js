@@ -1,0 +1,28 @@
+import { jsx as _jsx, jsxs as _jsxs } from "react/jsx-runtime";
+import { useState } from 'react';
+import { Bell, LogOut, Search, Sparkles, ChevronDown, Shield, } from 'lucide-react';
+import { useLogout } from '../features/auth/hooks';
+import { useAuthStore } from '../features/auth/store';
+export default function Topbar() {
+    const { logout } = useLogout();
+    const user = useAuthStore((s) => s.user);
+    const [focused, setFocused] = useState(false);
+    const isAdmin = user?.role === 'admin';
+    const initials = (user?.name ?? user?.email ?? 'U')
+        .split(' ')
+        .map((n) => n[0])
+        .join('')
+        .toUpperCase()
+        .slice(0, 2);
+    return (_jsx("header", { className: "sticky top-0 z-30 h-16 border-b border-slate-800/70 px-4 md:px-6", style: {
+            background: 'rgba(11,11,20,0.82)',
+            backdropFilter: 'blur(14px)',
+            WebkitBackdropFilter: 'blur(14px)',
+        }, children: _jsxs("div", { className: "h-full flex items-center gap-4", children: [_jsx("div", { className: "flex-1 max-w-xl", children: _jsxs("div", { className: `relative transition-all duration-200 ${focused ? 'scale-[1.01]' : ''}`, children: [_jsx(Search, { size: 15, className: `absolute left-3 top-1/2 -translate-y-1/2 transition-colors ${focused ? 'text-[#A78BFA]' : 'text-slate-500'}` }), _jsx("input", { placeholder: "Search reviews, clients, compliance flags...", readOnly: true, onFocus: () => setFocused(true), onBlur: () => setFocused(false), className: "\n                w-full h-11 pl-10 pr-4 rounded-2xl\n                bg-[#0f0f1a]/90\n                border border-slate-800\n                text-sm text-slate-200\n                placeholder:text-slate-500\n                outline-none\n                transition-all duration-200\n                focus:border-[#6B2FD9]/50\n                focus:ring-2 focus:ring-[#6B2FD9]/20\n              " }), _jsxs("div", { className: "hidden md:flex items-center gap-1 absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-slate-600 font-mono", children: [_jsx("kbd", { className: "px-1.5 py-0.5 rounded border border-slate-700 bg-[#151523]", children: "\u2318" }), _jsx("kbd", { className: "px-1.5 py-0.5 rounded border border-slate-700 bg-[#151523]", children: "K" })] })] }) }), _jsxs("div", { className: "flex items-center gap-2 md:gap-3 ml-auto", children: [_jsxs("div", { className: "hidden lg:flex items-center gap-2 px-3 py-2 rounded-xl border border-[#2DD4A0]/20 bg-[#2DD4A0]/10", children: [_jsx("span", { className: "w-2 h-2 rounded-full bg-[#2DD4A0] animate-pulse" }), _jsx("span", { className: "text-xs font-medium text-[#2DD4A0]", children: "AI systems operational" })] }), _jsxs("div", { className: "hidden sm:flex items-center gap-1.5 px-3 py-2 rounded-xl border border-[#6B2FD9]/25 bg-[#6B2FD9]/10 text-[#A78BFA]", children: [_jsx(Sparkles, { size: 13 }), _jsx("span", { className: "text-xs font-semibold", children: "AstuteIQ AI" })] }), _jsxs("button", { className: "\n              relative w-11 h-11 rounded-2xl\n              border border-slate-800\n              bg-[#0f0f1a]\n              flex items-center justify-center\n              text-slate-400\n              hover:text-white\n              hover:bg-slate-800/60\n              hover:border-slate-700\n              transition-all duration-200\n            ", children: [_jsx(Bell, { size: 18 }), _jsxs("span", { className: "absolute top-3 right-3 flex h-2.5 w-2.5", children: [_jsx("span", { className: "absolute inline-flex h-full w-full rounded-full bg-[#FF6B6B] opacity-75 animate-ping" }), _jsx("span", { className: "relative inline-flex rounded-full h-2.5 w-2.5 bg-[#FF6B6B]" })] })] }), user && (_jsxs("div", { className: "\n                flex items-center gap-3\n                pl-2 pr-3 py-1.5\n                rounded-2xl\n                border border-slate-800\n                bg-[#0f0f1a]\n                hover:bg-slate-800/50\n                hover:border-slate-700\n                transition-all duration-200\n              ", children: [_jsx("div", { className: "w-9 h-9 rounded-xl flex items-center justify-center text-xs font-bold text-white shadow-lg", style: {
+                                        background: isAdmin
+                                            ? 'linear-gradient(135deg, #14532d, #2DD4A0)'
+                                            : 'linear-gradient(135deg, #4a1f99, #6B2FD9)',
+                                    }, children: initials }), _jsxs("div", { className: "hidden md:block leading-tight", children: [_jsx("p", { className: "text-sm font-semibold text-white truncate max-w-[140px]", children: user.name ?? 'User' }), _jsxs("div", { className: "flex items-center gap-1.5 mt-0.5", children: [isAdmin ? (_jsx(Shield, { size: 10, className: "text-[#2DD4A0]" })) : (_jsx(Sparkles, { size: 10, className: "text-[#A78BFA]" })), _jsx("span", { className: "text-[11px] font-medium", style: {
+                                                        color: isAdmin ? '#2DD4A0' : '#A78BFA',
+                                                    }, children: isAdmin ? 'Administrator' : 'Paraplanner' })] })] }), _jsx(ChevronDown, { size: 14, className: "hidden sm:block text-slate-600" })] })), _jsx("button", { onClick: logout, title: "Sign out", className: "\n              w-11 h-11 rounded-2xl\n              border border-slate-800\n              bg-[#0f0f1a]\n              flex items-center justify-center\n              text-slate-400\n              hover:text-[#FF6B6B]\n              hover:bg-[#FF6B6B]/10\n              hover:border-[#FF6B6B]/20\n              transition-all duration-200\n            ", children: _jsx(LogOut, { size: 18 }) })] })] }) }));
+}
