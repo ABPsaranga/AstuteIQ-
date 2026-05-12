@@ -14,25 +14,13 @@ from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from anthropic.types import (
-    WebSearchTool20250305Param,
-    MessageParam,
-)
+from anthropic.types import MessageParam
 
 router = APIRouter()
 
 _MODEL = "claude-sonnet-4-6"
 _MAX_TOKENS = 8000
 _MAX_DOC_CHARS = 45000
-
-# -------------------------------------------------------------------
-# Anthropic tool definition
-# -------------------------------------------------------------------
-
-_WEB_SEARCH_TOOL = WebSearchTool20250305Param(
-    type="web_search_20250305",
-    name="web_search",
-)
 
 # -------------------------------------------------------------------
 # Payload schemas
@@ -312,51 +300,22 @@ async def _run_with_tools(
     system: str,
     messages: list[MessageParam],
 ) -> dict[str, Any] | None:
-    """
-    Multi-turn agentic loop for blocking endpoint.
-    """
 
-    current_messages = list(messages)
-
-    for _ in range(6):
-
-        response = await asyncio.to_thread(
-            lambda: client.messages.create(
-                model=_MODEL,
-                max_tokens=_MAX_TOKENS,
-                system=system,
-                tools=[_WEB_SEARCH_TOOL],
-                messages=current_messages,
-            )
+    response = await asyncio.to_thread(
+        lambda: client.messages.create(
+            model=_MODEL,
+            max_tokens=_MAX_TOKENS,
+            system=system,
+            messages=messages,
         )
+    )
 
-        print(f"[soa/review] stop_reason = {response.stop_reason}")
+    text = _extract_text_from_response(response.content)
 
-        if response.stop_reason == "end_turn":
+    print(f"[soa/review] Claude text:\n{text}")
 
-            text = _extract_text_from_response(response.content)
+    return _parse_json_from_text(text)
 
-            print(f"[soa/review] Claude text:\n{text}")
-
-            return _parse_json_from_text(text)
-
-        if response.stop_reason == "tool_use":
-
-            assistant_turn = cast(
-                MessageParam,
-                {
-                    "role": "assistant",
-                    "content": response.content,
-                },
-            )
-
-            current_messages = current_messages + [assistant_turn]
-
-            continue
-
-        break
-
-    return None
 # -------------------------------------------------------------------
 # Blocking endpoint
 # -------------------------------------------------------------------
@@ -491,7 +450,6 @@ async def stream_review(payload: ReviewPayload):
                     model=_MODEL,
                     max_tokens=_MAX_TOKENS,
                     system=system,
-                    tools=[_WEB_SEARCH_TOOL],
                     messages=messages,
                 ) as stream:
 
