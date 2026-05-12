@@ -21,11 +21,12 @@ export interface ReviewFinding {
 // ─── Override ─────────────────────────────────────────────────────────────────
 
 export interface FindingOverride {
-  checkId:      string
-  newStatus:    ReviewStatus
-  comment:      string
-  overriddenBy: string        // user id
-  overriddenAt: string        // ISO date
+  checkId:       string
+  originalStatus: ReviewStatus
+  newStatus:     ReviewStatus
+  comment:       string
+  overriddenBy:  string        // user id
+  overriddenAt:  string        // ISO date
 }
 
 // ─── Review Record ────────────────────────────────────────────────────────────

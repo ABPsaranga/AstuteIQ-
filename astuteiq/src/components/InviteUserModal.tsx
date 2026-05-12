@@ -1,29 +1,56 @@
 import { useState } from 'react'
-import { X, Mail, UserPlus } from 'lucide-react'
+import { X, Mail, UserPlus, AlertCircle } from 'lucide-react'
 import toast from 'react-hot-toast'
+import apiClient from '../lib/api'
 
 interface Props {
   onClose: () => void
 }
 
 export default function InviteUserModal({ onClose }: Props) {
-  const [email, setEmail]   = useState('')
-  const [role, setRole]     = useState<'user' | 'admin'>('user')
+  const [email,   setEmail]   = useState('')
+  const [role,    setRole]    = useState<'user' | 'admin'>('user')
   const [loading, setLoading] = useState(false)
+  const [error,   setError]   = useState<string | null>(null)
 
   async function handleInvite() {
     if (!email.trim()) return
+
     setLoading(true)
-    // Mock invite call
-    await new Promise((r) => setTimeout(r, 800))
-    toast.success(`Invite sent to ${email}`)
-    setLoading(false)
-    onClose()
+    setError(null)
+
+    try {
+      // Real backend call — service-role key stays server-side in auth.py
+      await apiClient.post('/auth/invite', { email: email.trim(), role })
+      toast.success(`Invite sent to ${email.trim()}`)
+      onClose()
+    } catch (err: any) {
+      // FastAPI surfaces errors in err.response.data.detail
+      const message =
+        err?.response?.data?.detail ??
+        err?.message ??
+        'Failed to send invite — try again.'
+      setError(message)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  function handleKeyDown(e: React.KeyboardEvent) {
+    if (e.key === 'Enter' && email.trim() && !loading) handleInvite()
+    if (e.key === 'Escape') onClose()
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm animate-fade-in">
-      <div className="card w-full max-w-md mx-4 animate-slide-up">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm animate-fade-in"
+      // Click outside to close
+      onClick={(e) => { if (e.target === e.currentTarget) onClose() }}
+    >
+      <div
+        className="card w-full max-w-md mx-4 animate-slide-up"
+        onKeyDown={handleKeyDown}
+      >
         {/* Header */}
         <div className="flex items-center justify-between mb-5">
           <h2 className="text-base font-semibold text-white flex items-center gap-2">
@@ -38,6 +65,14 @@ export default function InviteUserModal({ onClose }: Props) {
           </button>
         </div>
 
+        {/* Error banner */}
+        {error && (
+          <div className="flex gap-2 items-start p-3 mb-4 rounded-lg bg-[#FF6B6B]/10 border border-[#FF6B6B]/20 text-sm text-[#FF6B6B]">
+            <AlertCircle size={14} className="shrink-0 mt-0.5" />
+            <span>{error}</span>
+          </div>
+        )}
+
         {/* Form */}
         <div className="space-y-4">
           <div>
@@ -46,10 +81,11 @@ export default function InviteUserModal({ onClose }: Props) {
               <Mail size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
               <input
                 type="email"
+                autoFocus
                 className="input pl-9"
-                placeholder="advisor@practice.com.au"
+                placeholder="adviser@practice.com.au"
                 value={email}
-                onChange={(e) => setEmail(e.target.value)}
+                onChange={(e) => { setEmail(e.target.value); setError(null) }}
               />
             </div>
           </div>
@@ -64,6 +100,11 @@ export default function InviteUserModal({ onClose }: Props) {
               <option value="user">User — can run reviews</option>
               <option value="admin">Admin — full access</option>
             </select>
+            {role === 'admin' && (
+              <p className="text-xs text-[#FFB347] mt-1.5">
+                Admin users can manage all reviews, users, and platform settings.
+              </p>
+            )}
           </div>
         </div>
 
@@ -75,9 +116,16 @@ export default function InviteUserModal({ onClose }: Props) {
           <button
             onClick={handleInvite}
             disabled={!email.trim() || loading}
-            className="btn-primary"
+            className="btn-primary inline-flex items-center gap-2"
           >
-            {loading ? 'Sending…' : 'Send invite'}
+            {loading ? (
+              <>
+                <span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                Sending…
+              </>
+            ) : (
+              'Send invite'
+            )}
           </button>
         </div>
       </div>

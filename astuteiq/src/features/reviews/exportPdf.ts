@@ -23,6 +23,15 @@ export type Finding = {
   recommendation: string
 }
 
+export type FindingOverride = {
+  checkId: string
+  originalStatus: string
+  newStatus: string
+  comment: string
+  overriddenBy: string
+  overriddenAt: string
+}
+
 export type ReportData = {
   clientName: string
   adviser: string
@@ -33,6 +42,7 @@ export type ReportData = {
   riskLevel?: string
   documentsReviewed?: string[]
   findings: Finding[]
+  overrides?: FindingOverride[]
 }
 
 /* ================= HELPERS ================= */
@@ -110,19 +120,56 @@ function buildOverallAssessment(findings: Finding[]) {
   ])
 }
 
-function buildReviewerFeedback(findings: Finding[]) {
+function buildReviewerFeedback(findings: Finding[], overrides?: FindingOverride[]) {
   const flagged = findings.filter((f) => f.status !== 'PASS')
-  if (flagged.length === 0) return []
+  const hasOverrides = overrides && overrides.length > 0
 
-  return [
-    new Paragraph({
-      text: 'Reviewer feedback summary',
-      heading: HeadingLevel.HEADING_2,
-    }),
-    new Paragraph({
-      text: `The review identified ${flagged.length} flagged checks. Findings require human verification and remediation before the report is finalised.`,
-    }),
-  ]
+  if (flagged.length === 0 && !hasOverrides) return []
+
+  const feedback = []
+
+  if (hasOverrides) {
+    feedback.push(
+      new Paragraph({
+        text: 'Reviewer corrections applied',
+        heading: HeadingLevel.HEADING_2,
+      }),
+      new Paragraph({
+        text: `The reviewer has applied ${overrides.length} correction${overrides.length === 1 ? '' : 's'} to the AI findings. These corrections have been incorporated into the final assessment.`,
+      })
+    )
+
+    // Add details of each override
+    overrides.forEach((override, index) => {
+      const finding = findings.find(f => f.title === override.checkId) // This might need adjustment based on how checkId maps to title
+      feedback.push(
+        new Paragraph({
+          text: `Correction ${index + 1}: ${finding?.title || override.checkId}`,
+          heading: HeadingLevel.HEADING_3,
+        }),
+        new Paragraph({
+          text: `Status changed from ${override.originalStatus} to ${override.newStatus}`,
+        }),
+        new Paragraph({
+          text: `Reason: ${override.comment}`,
+        })
+      )
+    })
+  }
+
+  if (flagged.length > 0) {
+    feedback.push(
+      new Paragraph({
+        text: 'AI findings requiring attention',
+        heading: HeadingLevel.HEADING_2,
+      }),
+      new Paragraph({
+        text: `The AI identified ${flagged.length} finding${flagged.length === 1 ? '' : 's'} that require${flagged.length === 1 ? 's' : ''} human verification and potential remediation before the report is finalised.`,
+      })
+    )
+  }
+
+  return feedback
 }
 
 /* ================= EXPORT ================= */
@@ -177,7 +224,7 @@ export async function exportDocx(report: ReportData) {
           }),
           new Paragraph({ text: '' }),
 
-          ...buildReviewerFeedback(report.findings),
+          ...buildReviewerFeedback(report.findings, report.overrides),
           report.findings.some((f) => f.status !== 'PASS')
             ? new Paragraph({ text: '' })
             : new Paragraph({ text: '' }),

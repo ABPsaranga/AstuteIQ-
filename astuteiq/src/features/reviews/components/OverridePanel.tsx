@@ -1,26 +1,31 @@
 import { useState } from 'react'
 import { Edit3, X } from 'lucide-react'
-import type { ReviewFinding, ReviewStatus } from '../../../features/reviews/types'
+import type { ReviewFinding, ReviewStatus, FindingOverride } from '../../../features/reviews/types'
 import StatusBadge from '../../../components/ui/StatusBadge'
 import { useSubmitOverride } from '../../../features/reviews/hooks'
 
 interface Props {
   finding:  ReviewFinding
   reviewId: string
+  existingOverride?: FindingOverride
   onClose?: () => void
+  onOverrideSubmitted?: () => void
 }
 
 const STATUSES: ReviewStatus[] = ['PASS', 'FAIL', 'WARNING', 'NA']
 
-export default function OverridePanel({ finding, reviewId, onClose }: Props) {
-  const [status, setStatus]   = useState<ReviewStatus>(finding.status)
-  const [comment, setComment] = useState('')
+export default function OverridePanel({ finding, reviewId, existingOverride, onClose, onOverrideSubmitted }: Props) {
+  const [status, setStatus]   = useState<ReviewStatus>(existingOverride?.newStatus ?? finding.status)
+  const [comment, setComment] = useState(existingOverride?.comment ?? '')
   const { submit, loading }   = useSubmitOverride(reviewId)
 
   async function handleSubmit() {
     if (!comment.trim()) return
     const ok = await submit(finding.checkId, status, comment)
-    if (ok) onClose?.()
+    if (ok) {
+      onOverrideSubmitted?.()
+      onClose?.()
+    }
   }
 
   return (
@@ -44,10 +49,17 @@ export default function OverridePanel({ finding, reviewId, onClose }: Props) {
 
       {/* Current */}
       <div className="flex items-center gap-2 text-xs text-slate-500">
-        <span>Current:</span>
+        <span>Original:</span>
         <StatusBadge status={finding.status} size="sm" />
         <span className="text-slate-600">{finding.confidence}% confidence</span>
       </div>
+
+      {existingOverride && (
+        <div className="flex items-center gap-2 text-xs text-amber-400">
+          <span>Previously overridden to:</span>
+          <StatusBadge status={existingOverride.newStatus} size="sm" />
+        </div>
+      )}
 
       {/* New status */}
       <div>

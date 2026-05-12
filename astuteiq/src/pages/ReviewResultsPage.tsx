@@ -100,6 +100,12 @@ const normalizeOverrides = (overrides: unknown[]): FindingOverride[] => {
   function handleExport() {
     const reportDate = safeReview.completedAt || safeReview.createdAt || new Date().toISOString()
 
+    // Helper to get effective status (considering overrides)
+    function getEffectiveStatus(finding: ReviewFinding) {
+      const override = safeReview.overrides.find((o: any) => o.checkId === finding.checkId)
+      return override ? override.newStatus : finding.status
+    }
+
     exportDocx({
       clientName: safeReview.fileName || 'Client',
       adviser: safeReview.userId || 'Adviser',
@@ -107,14 +113,15 @@ const normalizeOverrides = (overrides: unknown[]): FindingOverride[] => {
       date: format(new Date(reportDate), 'dd MMM yyyy'),
       riskLevel: safeReview.status === 'complete' ? 'LOW' : 'MEDIUM',
       documentsReviewed: [safeReview.fileName],
+      overrides: safeReview.overrides,
 
       findings: findings.map((f) => ({
         section: f.category || 'General',
         title: f.title,
-        status: f.status === 'PASS' ? 'PASS' : f.status === 'FAIL' ? 'FAIL' : 'WARN',
+        status: getEffectiveStatus(f) === 'PASS' ? 'PASS' : getEffectiveStatus(f) === 'FAIL' ? 'FAIL' : 'WARN',
         issue: f.message || 'No issue identified',
         recommendation:
-          f.status === 'PASS'
+          getEffectiveStatus(f) === 'PASS'
             ? 'No action required'
             : 'Review and update this section to meet compliance standards',
       })),
@@ -182,9 +189,14 @@ const normalizeOverrides = (overrides: unknown[]): FindingOverride[] => {
 
           <ResultsTable
             findings={findings}
+            overrides={safeReview.overrides}
             onSelectFinding={(f: ReviewFinding) => {
               setSelectedFinding(f)
               setShowOverride(false)
+            }}
+            onFlagFinding={(f: ReviewFinding) => {
+              setSelectedFinding(f)
+              setShowOverride(true)
             }}
             selectedId={selectedFinding?.checkId}
           />
@@ -193,7 +205,12 @@ const normalizeOverrides = (overrides: unknown[]): FindingOverride[] => {
             <OverridePanel
               finding={selectedFinding}
               reviewId={safeReview.id}
+              existingOverride={safeReview.overrides.find((o: FindingOverride) => o.checkId === selectedFinding.checkId)}
               onClose={() => setShowOverride(false)}
+              onOverrideSubmitted={() => {
+                // Refresh the review data
+                fetch()
+              }}
             />
           )}
 
@@ -233,17 +250,6 @@ const normalizeOverrides = (overrides: unknown[]): FindingOverride[] => {
               </p>
             </div>
           )}
-        </div>
-
-        <div>
-          <h2 className="text-sm font-semibold text-white mb-3">
-            Document viewer
-          </h2>
-
-          <PDFHighlighterViewer
-            findings={findings}
-            selectedFinding={selectedFinding}
-          />
         </div>
       </div>
     </div>
