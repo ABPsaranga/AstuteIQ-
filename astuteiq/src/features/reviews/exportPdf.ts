@@ -309,8 +309,6 @@ function buildScoreSummary(counts: { pass: number; warn: number; fail: number; n
 
 /* ================= SECTION BUILDER ================= */
 
-/* ================= SECTION BUILDER ================= */
-
 function buildSections(findings: Finding[]) {
   const grouped = findings.reduce((acc: any, f) => {
     if (!acc[f.section]) acc[f.section] = []

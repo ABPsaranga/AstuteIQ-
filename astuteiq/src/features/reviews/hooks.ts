@@ -27,6 +27,16 @@ interface HistoryResponse {
   limit:   number
 }
 
+type ReviewStatus =
+  | 'processing'
+  | 'complete'
+  | 'failed'
+
+
+// ─────────────────────────────────────────────────────────────
+// Live review state (client-side only)
+
+
 // ─────────────────────────────────────────────────────────────
 // Review history
 // ─────────────────────────────────────────────────────────────
