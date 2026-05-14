@@ -1,4 +1,3 @@
-
 import { useState, useCallback, useRef, useEffect } from 'react'
 import { useDropzone } from 'react-dropzone'
 import {
@@ -75,6 +74,32 @@ interface ReviewResult {
    Shape B (nested): { review_metadata, compliance_checks, critical_issues, ... }
 ============================================================================ */
 
+/**
+ * Flatten any backend summary shape into a plain string.
+ * The backend sometimes returns an object like:
+ *   { critical_findings: '...', overall_assessment: '...', ... }
+ * React cannot render objects as children, so we convert here.
+ */
+function normaliseSummary(raw: unknown): string {
+  if (!raw) return ''
+  if (typeof raw === 'string') return raw
+  if (typeof raw === 'object') {
+    // Merge all string values in a sensible order
+    const obj = raw as Record<string, unknown>
+    const parts: string[] = []
+    // Known preferred keys first
+    const order = ['overall_assessment', 'critical_findings', 'critical_issues_summary',
+                   'positive_observations', 'summary', 'description']
+    order.forEach(k => { if (typeof obj[k] === 'string' && obj[k]) parts.push(obj[k] as string) })
+    // Any remaining string values
+    Object.entries(obj).forEach(([k, v]) => {
+      if (!order.includes(k) && typeof v === 'string' && v) parts.push(v)
+    })
+    return parts.join('\n\n')
+  }
+  return String(raw)
+}
+
 function normaliseBackendResult(raw: any): ReviewResult {
   if (!raw || typeof raw !== 'object') {
     return { client_name: '', adviser_name: '', practice_name: '', advice_type: '',
@@ -89,14 +114,14 @@ function normaliseBackendResult(raw: any): ReviewResult {
       practice_name: raw.practice_name || '',
       advice_type:   raw.advice_type   || '',
       date:          raw.date          || '',
-      summary:       raw.summary       || '',
+      summary:       normaliseSummary(raw.summary),
       risk_level:    (['LOW','MEDIUM','HIGH'].includes((raw.risk_level||'').toUpperCase())
                        ? raw.risk_level.toUpperCase() : 'LOW') as 'LOW'|'MEDIUM'|'HIGH',
       docs_reviewed: Array.isArray(raw.docs_reviewed) ? raw.docs_reviewed : [],
       mode:          raw.mode === 'quick' ? 'quick' : 'full',
       checks:        raw.checks ?? [],
       assessment:    raw.assessment,
-      additional_summary: raw.additional_summary,
+      additional_summary: normaliseSummary(raw.additional_summary),
     }
   }
 
@@ -188,7 +213,7 @@ function normaliseBackendResult(raw: any): ReviewResult {
     })
   }
 
-  const summary = raw.summary || rating.summary || String(raw.overall_assessment || rating.description || '')
+  const summary = normaliseSummary(raw.summary || rating.summary || raw.overall_assessment || rating.description)
 
   return {
     client_name, adviser_name, practice_name, advice_type, date,
@@ -655,12 +680,26 @@ async function readSseStream(
       try { payload = JSON.parse(line.replace(/^data:\s*/, '')) } catch { continue }
       if (payload.chunk) onChunk(payload.chunk)
       if (payload.step && onStep) onStep(payload.step)
+      if (payload.debug_raw) {
+        console.warn('[AstuteIQ] RAW CLAUDE RESPONSE (first 2000 chars):', payload.debug_raw)
+      }
       if (payload.done) {
         if (payload.error) throw new Error(`Backend: ${payload.error}`)
-        if (payload.result) return normaliseBackendResult(payload.result)
+        if (payload.result) {
+          console.debug('[AstuteIQ] raw result:', JSON.stringify(payload.result).slice(0, 500))
+          const normalised = normaliseBackendResult(payload.result)
+          console.debug('[AstuteIQ] checks count:', normalised.checks?.length ?? 0)
+          if (!normalised.checks?.length) {
+            throw new Error('Review completed but returned no checks. Please try again.')
+          }
+          return normalised
+        }
         throw new Error('Backend sent done=true but no result.')
       }
-      if (payload.result && !payload.done) return normaliseBackendResult(payload.result)
+      if (payload.result && !payload.done) {
+        const nr = normaliseBackendResult(payload.result)
+        if (nr.checks?.length) return nr
+      }
       if (payload.error && !payload.done) throw new Error(`Backend: ${payload.error}`)
     }
   }
@@ -906,6 +945,237 @@ async function exportToWord(result: ReviewResult, overrides: Record<string, Over
     console.error('[AstuteIQ] Export error:', err)
     alert('Export failed: ' + err.message)
   }
+}
+
+/* ============================================================================
+   COLLAPSIBLE SUMMARY — compact expandable assessment block
+============================================================================ */
+
+function CollapsibleSummary({ summary, mode }: { summary: string; mode: 'quick' | 'full' }) {
+  const [expanded, setExpanded] = useState(false)
+  if (!summary) return null
+
+  // For quick mode show just first 200 chars collapsed
+  const isLong = summary.length > 200
+  const displayText = expanded || !isLong ? summary : summary.slice(0, 200) + '…'
+
+  return (
+    <div className="bg-white/5 border-l-4 border-[#6B2FD9] rounded-r-xl overflow-hidden">
+      <div className="px-4 py-3">
+        <p className="text-xs text-slate-300 whitespace-pre-line leading-relaxed">{displayText}</p>
+      </div>
+      {isLong && (
+        <button
+          onClick={() => setExpanded(e => !e)}
+          className="w-full flex items-center justify-center gap-1.5 py-2 text-[10px] font-semibold text-[#A78BFA] hover:text-white tracking-wider uppercase border-t border-slate-800/60 transition-colors"
+        >
+          {expanded ? <><ChevronUp size={11} /> Collapse assessment</> : <><ChevronDown size={11} /> Read full assessment</>}
+        </button>
+      )}
+    </div>
+  )
+}
+
+/* ============================================================================
+   RESULTS PANEL — unified display for both Quick Check and Full Review
+============================================================================ */
+
+interface ResultsPanelProps {
+  result:          ReviewResult
+  overrides:       Record<string, Override>
+  feedback:        Record<string, FeedbackEntry>
+  flaggedCount:    number
+  overrideCount:   number
+  groupedChecks:   Record<string, CheckResult[]>
+  onSaveOverride:  (id: string, ov: Override) => void
+  onClearOverride: (id: string) => void
+  onExportWord:    () => void
+  onExportCsv:     () => void
+  onReset:         () => void
+}
+
+function ResultsPanel({
+  result, overrides, feedback, flaggedCount, overrideCount,
+  groupedChecks, onSaveOverride, onClearOverride,
+  onExportWord, onExportCsv, onReset,
+}: ResultsPanelProps) {
+  const isQuick    = result.mode === 'quick'
+  const checks     = result.checks ?? []
+  const failCount  = checks.filter(c => (overrides[c.id]?.newStatus ?? c.status) === 'fail').length
+  const warnCount  = checks.filter(c => (overrides[c.id]?.newStatus ?? c.status) === 'warning').length
+  const totalIssues = failCount + warnCount
+
+  return (
+    <div className="space-y-4 animate-slide-up">
+
+      {/* Header bar */}
+      <div className="bg-[#0F0F1A] rounded-xl px-5 py-4 flex flex-wrap items-center gap-x-4 gap-y-2">
+        <div>
+          <h2 className="text-base font-semibold text-white">{result.client_name || 'Client'}</h2>
+          <p className="text-xs text-slate-500">
+            {result.advice_type}
+            {result.date         ? ` · ${result.date}`          : ''}
+            {result.adviser_name ? ` · ${result.adviser_name}`  : ''}
+          </p>
+        </div>
+        <div className="ml-auto flex items-center gap-2 flex-wrap">
+          {result.risk_level && (
+            <span className={`text-xs font-bold px-3 py-1 rounded-full border ${
+              result.risk_level === 'HIGH'   ? 'bg-[#FFF0F0] text-[#B02020] border-[#FFBBBB]' :
+              result.risk_level === 'MEDIUM' ? 'bg-[#FFF8EC] text-[#9A5A00] border-[#FFD98A]' :
+                                               'bg-[#EDFAF3] text-[#1A7A45] border-[#B8EDCF]'
+            }`}>{result.risk_level} RISK</span>
+          )}
+          <span className="text-xs font-semibold px-3 py-1 rounded-full bg-slate-800 text-slate-300 border border-slate-700">
+            {isQuick ? 'QUICK CHECK' : 'FULL REVIEW'}
+          </span>
+        </div>
+      </div>
+
+      {/* Docs reviewed */}
+      {result.docs_reviewed?.length > 0 && (
+        <p className="text-xs text-slate-500 px-1">
+          Documents reviewed: {result.docs_reviewed.join(' · ')}
+        </p>
+      )}
+
+      {/* Score tiles */}
+      <ScoreTiles checks={checks} overrides={overrides} />
+
+      {/* Quick Check issue callout — prominent headline before findings */}
+      {isQuick && (
+        <div className={`flex items-center gap-3 px-4 py-3 rounded-xl border ${
+          failCount > 0
+            ? 'bg-[#FFF0F0] border-[#FFBBBB]'
+            : warnCount > 0
+              ? 'bg-[#FFF8EC] border-[#FFD98A]'
+              : 'bg-[#EDFAF3] border-[#B8EDCF]'
+        }`}>
+          {failCount > 0
+            ? <XCircle size={15} className="text-[#B02020] shrink-0" />
+            : warnCount > 0
+              ? <AlertTriangle size={15} className="text-[#9A5A00] shrink-0" />
+              : <CheckCircle size={15} className="text-[#1A7A45] shrink-0" />
+          }
+          <p className={`text-sm font-semibold ${
+            failCount > 0 ? 'text-[#B02020]' : warnCount > 0 ? 'text-[#9A5A00]' : 'text-[#1A7A45]'
+          }`}>
+            {totalIssues === 0
+              ? 'No issues found in Quick Check.'
+              : `${totalIssues} issue${totalIssues > 1 ? 's' : ''} found${failCount > 0 ? ` — ${failCount} FAIL${failCount > 1 ? 's' : ''}` : ''}${failCount > 0 && warnCount > 0 ? ', ' : ''}${warnCount > 0 ? `${warnCount} WARNING${warnCount > 1 ? 's' : ''}` : ''}.`
+            }
+          </p>
+        </div>
+      )}
+
+      {/* Summary — collapsible for quick, full-width for full review */}
+      {result.summary && (
+        isQuick
+          ? <CollapsibleSummary summary={result.summary} mode="quick" />
+          : <div className="bg-white/5 border-l-4 border-[#6B2FD9] rounded-r-xl px-4 py-3 text-xs text-slate-300 whitespace-pre-line leading-relaxed">
+              {result.summary}
+            </div>
+      )}
+
+      {/* AI disclaimer banner */}
+      <div className="flex items-start gap-3 px-4 py-3 rounded-xl bg-[#FFF8EC] border border-[#FFD98A]">
+        <AlertTriangle size={14} className="text-[#9A5A00] shrink-0 mt-0.5" />
+        <p className="text-xs text-[#9A5A00] leading-relaxed">
+          <strong>AI-assisted review — all findings require human verification.</strong>{' '}
+          FAIL and WARNING items must be reviewed in the original documents before the SOA is submitted.
+        </p>
+      </div>
+
+      {/* Reviewer feedback summary */}
+      {flaggedCount > 0 && (
+        <div className="px-4 py-3 rounded-xl bg-[#F0EAFF] border border-[#D8C8FF]">
+          <p className="text-sm text-[#6B2FD9]">
+            <strong>{flaggedCount} finding{flaggedCount > 1 ? 's' : ''} marked as incorrect</strong>
+            {overrideCount > 0 ? ` — ${overrideCount} status override${overrideCount > 1 ? 's' : ''} applied` : ''}.
+            {' '}These will be included in your Word report.
+          </p>
+        </div>
+      )}
+
+      {/* Action buttons */}
+      <div className="flex items-center gap-2 flex-wrap">
+        <button onClick={onExportWord}
+          className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[#0F0F1A] text-white text-xs font-semibold hover:opacity-85 transition-opacity border border-slate-700">
+          <Download size={13} /> Export Word Report
+        </button>
+        {flaggedCount > 0 && (
+          <button onClick={onExportCsv}
+            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg border border-slate-700 text-slate-300 text-xs font-medium hover:text-white hover:border-slate-500 transition-colors">
+            <FileDown size={13} /> Export Feedback CSV
+          </button>
+        )}
+        <button onClick={onReset}
+          className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg border border-slate-700 text-slate-400 text-xs font-medium hover:text-white transition-colors ml-auto">
+          <RotateCcw size={13} /> New Review
+        </button>
+      </div>
+
+      {/* Findings — grouped by area — same card UI for both Quick and Full */}
+      {checks.length > 0 ? (
+        <div className="card space-y-0 p-0 overflow-hidden">
+          {AREA_ORDER.map(area => {
+            const areaChecks = groupedChecks[area]
+            if (!areaChecks?.length) return null
+            return (
+              <div key={area}>
+                <div className="px-5 py-2 bg-slate-800/40 border-b border-slate-800">
+                  <p className="text-[10px] font-semibold tracking-widest uppercase text-slate-400">
+                    {AREA_LABELS[area] || area.toUpperCase()}
+                  </p>
+                </div>
+                <div className="px-5 divide-y divide-slate-800/50">
+                  {areaChecks.map(check => (
+                    <FindingRow
+                      key={check.id || check.label}
+                      check={check}
+                      override={overrides[check.id]}
+                      onSaveOverride={onSaveOverride}
+                      onClearOverride={onClearOverride}
+                    />
+                  ))}
+                </div>
+              </div>
+            )
+          })}
+          {/* Remaining areas not in AREA_ORDER */}
+          {Object.entries(groupedChecks)
+            .filter(([area]) => !AREA_ORDER.includes(area))
+            .map(([area, areaChecks]) => (
+              <div key={area}>
+                <div className="px-5 py-2 bg-slate-800/40 border-b border-slate-800">
+                  <p className="text-[10px] font-semibold tracking-widest uppercase text-slate-400">{area.toUpperCase()}</p>
+                </div>
+                <div className="px-5 divide-y divide-slate-800/50">
+                  {areaChecks.map(check => (
+                    <FindingRow
+                      key={check.id || check.label}
+                      check={check}
+                      override={overrides[check.id]}
+                      onSaveOverride={onSaveOverride}
+                      onClearOverride={onClearOverride}
+                    />
+                  ))}
+                </div>
+              </div>
+            ))
+          }
+        </div>
+      ) : (
+        /* No checks returned — show summary as primary content */
+        result.summary && (
+          <div className="bg-white/5 border-l-4 border-[#6B2FD9] rounded-r-xl px-4 py-3 text-sm text-slate-300 whitespace-pre-line leading-relaxed">
+            {result.summary}
+          </div>
+        )
+      )}
+
+    </div>
+  )
 }
 
 /* ============================================================================
@@ -1483,140 +1753,19 @@ export default function SOAAnalysisPage() {
 
       {/* Results */}
       {result && (
-        <div className="space-y-4 animate-slide-up">
-
-          {/* Header bar — client name, meta, risk pill, mode badge */}
-          // 
-          <div className="bg-[#0F0F1A] rounded-xl px-5 py-4 flex flex-wrap items-center gap-x-4 gap-y-2">
-            <div>
-              <h2 className="text-base font-semibold text-white">{result.client_name || 'Client'}</h2>
-              <p className="text-xs text-slate-500">
-                {result.advice_type}
-                {result.date        ? ` · ${result.date}`         : ''}
-                {result.adviser_name ? ` · ${result.adviser_name}` : ''}
-              </p>
-            </div>
-            <div className="ml-auto flex items-center gap-2 flex-wrap">
-              {result.risk_level && (
-                <span className={`text-xs font-bold px-3 py-1 rounded-full border ${
-                  result.risk_level === 'HIGH'   ? 'bg-[#FFF0F0] text-[#B02020] border-[#FFBBBB]' :
-                  result.risk_level === 'MEDIUM' ? 'bg-[#FFF8EC] text-[#9A5A00] border-[#FFD98A]' :
-                                                   'bg-[#EDFAF3] text-[#1A7A45] border-[#B8EDCF]'
-                }`}>{result.risk_level} RISK</span>
-              )}
-              <span className="text-xs font-semibold px-3 py-1 rounded-full bg-slate-800 text-slate-300 border border-slate-700">
-                {result.mode === 'quick' ? 'QUICK CHECK' : 'FULL REVIEW'}
-              </span>
-            </div>
-          </div>
-
-          {/* Docs reviewed */}
-          {result.docs_reviewed?.length > 0 && (
-            <p className="text-xs text-slate-500 px-1">
-              Documents reviewed: {result.docs_reviewed.join(' · ')}
-            </p>
-          )}
-
-          {/* Score tiles */}
-          <ScoreTiles checks={result.checks ?? []} overrides={overrides} />
-
-          {/* Summary */}
-          {result.summary && (
-            <div className="bg-white/5 border-l-4 border-[#6B2FD9] rounded-r-xl px-4 py-3 text-sm text-slate-300 whitespace-pre-line leading-relaxed">
-              {result.summary}
-            </div>
-          )}
-
-          {/* AI disclaimer banner — matches screenshot */}
-          <div className="flex items-start gap-3 px-4 py-3 rounded-xl bg-[#FFF8EC] border border-[#FFD98A]">
-            <AlertTriangle size={14} className="text-[#9A5A00] shrink-0 mt-0.5" />
-            <p className="text-xs text-[#9A5A00] leading-relaxed">
-              <strong>AI-assisted review — all findings require human verification.</strong>{' '}
-              FAIL and WARNING items must be reviewed in the original documents before the SOA is submitted.
-            </p>
-          </div>
-
-          {/* Reviewer feedback summary — shown when any overrides applied */}
-          {flaggedCount > 0 && (
-            <div className="px-4 py-3 rounded-xl bg-[#F0EAFF] border border-[#D8C8FF]">
-              <p className="text-sm text-[#6B2FD9]">
-                <strong>{flaggedCount} finding{flaggedCount > 1 ? 's' : ''} marked as incorrect</strong>
-                {overrideCount > 0 ? ` — ${overrideCount} status override${overrideCount > 1 ? 's' : ''} applied` : ''}.
-                {' '}These will be included in your Word report.
-              </p>
-            </div>
-          )}
-
-          {/* Action buttons */}
-          <div className="flex items-center gap-2 flex-wrap">
-            <button onClick={() => exportToWord(result, overrides)}
-              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[#0F0F1A] text-white text-xs font-semibold hover:opacity-85 transition-opacity border border-slate-700">
-              <Download size={13} /> Export Word Report
-            </button>
-            {flaggedCount > 0 && (
-              <button onClick={() => exportFeedbackCsv(feedback, result.client_name)}
-                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg border border-slate-700 text-slate-300 text-xs font-medium hover:text-white hover:border-slate-500 transition-colors">
-                <FileDown size={13} /> Export Feedback CSV
-              </button>
-            )}
-            <button onClick={reset}
-              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg border border-slate-700 text-slate-400 text-xs font-medium hover:text-white transition-colors ml-auto">
-              <RotateCcw size={13} /> New Review
-            </button>
-          </div>
-
-          {/* Findings — grouped by area, each with section heading */}
-          <div className="card space-y-0 p-0 overflow-hidden">
-            {AREA_ORDER.map(area => {
-              const areaChecks = groupedChecks[area]
-              if (!areaChecks?.length) return null
-              return (
-                <div key={area}>
-                  {/* Section heading — matches screenshot */}
-                  <div className="px-5 py-2 bg-slate-800/40 border-b border-slate-800">
-                    <p className="text-[10px] font-semibold tracking-widest uppercase text-slate-400">
-                      {AREA_LABELS[area] || area.toUpperCase()}
-                    </p>
-                  </div>
-                  <div className="px-5 divide-y divide-slate-800/50">
-                    {areaChecks.map(check => (
-                      <FindingRow
-                        key={check.id || check.label}
-                        check={check}
-                        override={overrides[check.id]}
-                        onSaveOverride={saveOverride}
-                        onClearOverride={clearOverride}
-                      />
-                    ))}
-                  </div>
-                </div>
-              )
-            })}
-            {/* Remaining areas not in AREA_ORDER */}
-            {Object.entries(groupedChecks)
-              .filter(([area]) => !AREA_ORDER.includes(area))
-              .map(([area, areaChecks]) => (
-                <div key={area}>
-                  <div className="px-5 py-2 bg-slate-800/40 border-b border-slate-800">
-                    <p className="text-[10px] font-semibold tracking-widest uppercase text-slate-400">{area.toUpperCase()}</p>
-                  </div>
-                  <div className="px-5 divide-y divide-slate-800/50">
-                    {areaChecks.map(check => (
-                      <FindingRow
-                        key={check.id || check.label}
-                        check={check}
-                        override={overrides[check.id]}
-                        onSaveOverride={saveOverride}
-                        onClearOverride={clearOverride}
-                      />
-                    ))}
-                  </div>
-                </div>
-              ))
-            }
-          </div>
-
-        </div>
+        <ResultsPanel
+          result={result}
+          overrides={overrides}
+          feedback={feedback}
+          flaggedCount={flaggedCount}
+          overrideCount={overrideCount}
+          groupedChecks={groupedChecks}
+          onSaveOverride={saveOverride}
+          onClearOverride={clearOverride}
+          onExportWord={() => exportToWord(result, overrides)}
+          onExportCsv={() => exportFeedbackCsv(feedback, result.client_name)}
+          onReset={reset}
+        />
       )}
     </div>
   )
