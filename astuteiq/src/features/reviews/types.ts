@@ -32,6 +32,10 @@ export interface FindingOverride {
 // ─── Review Record ────────────────────────────────────────────────────────────
 
 export interface ReviewRecord {
+  clientName: string
+  riskLevel: string
+  practiceName: string
+  adviserName: string
   id:          string
   userId:      string
   fileName:    string

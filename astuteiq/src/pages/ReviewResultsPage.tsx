@@ -82,14 +82,79 @@ const normalizeOverrides = (overrides: unknown[]): FindingOverride[] => {
 
 
   // ================= SAFE REVIEW =================
-  const safeReview: ReviewRecord = {
+ // ================= SAFE REVIEW =================
+const safeReview: ReviewRecord = {
   ...review,
-  mode: normalizeMode(review.mode),
-  status: normalizeStatus(review.status),
-  findings: (review.findings ?? []) as ReviewFinding[],
 
-  // ✅ FIXED HERE
-  overrides: normalizeOverrides(review.overrides ?? []),
+  id:
+    review.id ??
+    crypto.randomUUID(),
+
+  userId:
+    review.userId ??
+    'unknown-user',
+
+  fileName:
+    review.fileName ??
+    'Untitled Review',
+
+  fileSize:
+    review.fileSize ?? 0,
+
+  createdAt:
+    review.createdAt ??
+    new Date().toISOString(),
+
+  completedAt:
+    review.completedAt ??
+    review.createdAt ??
+    new Date().toISOString(),
+
+  score:
+    typeof review.score === 'number'
+      ? review.score
+      : 0,
+
+  mode: normalizeMode(
+    review.mode
+  ),
+
+  status: normalizeStatus(
+    review.status
+  ),
+
+  findings:
+    (review.findings ??
+      []) as unknown as ReviewFinding[],
+
+  overrides: normalizeOverrides(
+    review.overrides ?? []
+  ),
+
+  // ✅ REQUIRED FIELDS
+  clientName:
+    (review as any).clientName ??
+    (review as any).result
+      ?.client_name ??
+    'Unknown Client',
+
+  adviserName:
+    (review as any).adviserName ??
+    (review as any).result
+      ?.adviser_name ??
+    'Unknown Adviser',
+
+  practiceName:
+    (review as any).practiceName ??
+    (review as any).result
+      ?.practice_name ??
+    'Unknown Practice',
+
+  riskLevel:
+    (review as any).riskLevel ??
+    (review as any).result
+      ?.risk_level ??
+    'MEDIUM',
 }
 
   const findings: ReviewFinding[] = safeReview.findings

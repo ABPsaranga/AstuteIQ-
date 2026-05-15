@@ -65,6 +65,8 @@ interface ReviewResult {
   score?:              number
   stage?:              number
   additional_summary?: string
+  /** True while stream is still in progress and more checks may arrive */
+  _streaming?:         boolean
 }
 
 /* ============================================================================
@@ -84,14 +86,11 @@ function normaliseSummary(raw: unknown): string {
   if (!raw) return ''
   if (typeof raw === 'string') return raw
   if (typeof raw === 'object') {
-    // Merge all string values in a sensible order
     const obj = raw as Record<string, unknown>
     const parts: string[] = []
-    // Known preferred keys first
     const order = ['overall_assessment', 'critical_findings', 'critical_issues_summary',
                    'positive_observations', 'summary', 'description']
     order.forEach(k => { if (typeof obj[k] === 'string' && obj[k]) parts.push(obj[k] as string) })
-    // Any remaining string values
     Object.entries(obj).forEach(([k, v]) => {
       if (!order.includes(k) && typeof v === 'string' && v) parts.push(v)
     })
@@ -149,7 +148,6 @@ function normaliseBackendResult(raw: any): ReviewResult {
     checks.push({ id: id || `CHK-${++checkCounter}`, area, label: label || id, status: s, note: note || '' })
   }
 
-  // compliance_checks: array-of-sections or flat array or object
   const cc = raw.compliance_checks
   if (Array.isArray(cc)) {
     cc.forEach((section: any) => {
@@ -170,7 +168,6 @@ function normaliseBackendResult(raw: any): ReviewResult {
     })
   }
 
-  // critical_issues → fail checks
   if (Array.isArray(raw.critical_issues)) {
     raw.critical_issues.forEach((issue: any, i: number) => {
       const id = issue.id || issue.check_id || `CI-${i + 1}`
@@ -181,7 +178,6 @@ function normaliseBackendResult(raw: any): ReviewResult {
     })
   }
 
-  // personalisation_checks
   const pc = raw.personalisation_checks
   if (Array.isArray(pc))
     pc.forEach((c: any) => pushCheck(c.id || '', 'personalisation', c.label || '', c.status || '', c.note || ''))
@@ -191,17 +187,14 @@ function normaliseBackendResult(raw: any): ReviewResult {
         pushCheck(key, 'personalisation', val.label || key, val.status || '', val.note || val.finding || '')
     })
 
-  // consistency_checks
   if (Array.isArray(raw.consistency_checks))
     raw.consistency_checks.forEach((c: any) =>
       pushCheck(c.id || '', 'consistency', c.label || '', c.status || '', c.note || ''))
 
-  // structure_checks
   if (Array.isArray(raw.structure_checks))
     raw.structure_checks.forEach((c: any) =>
       pushCheck(c.id || '', 'structure', c.label || '', c.status || '', c.note || ''))
 
-  // Fallback: flatten any top-level arrays of check-objects
   if (checks.length === 0) {
     Object.values(raw).forEach((val: any) => {
       if (Array.isArray(val))
@@ -657,17 +650,20 @@ function exportFeedbackCsv(feedback: Record<string, FeedbackEntry>, clientName: 
 }
 
 /* ============================================================================
-   SSE STREAM READER
+   SSE STREAM READER — progressive partial result support
 ============================================================================ */
 
 async function readSseStream(
   response: Response,
   onChunk: (text: string) => void,
   onStep?: (step: number) => void,
+  onPartialResult?: (result: ReviewResult) => void,
 ): Promise<ReviewResult> {
   if (!response.body) throw new Error('Streaming response unavailable.')
   const reader = response.body.getReader(), decoder = new TextDecoder()
   let buf = ''
+  let latestPartial: ReviewResult | null = null
+
   while (true) {
     const { done, value } = await reader.read()
     if (done) break
@@ -678,31 +674,94 @@ async function readSseStream(
       if (!line) continue
       let payload: any
       try { payload = JSON.parse(line.replace(/^data:\s*/, '')) } catch { continue }
+
+      // Stream text chunks
       if (payload.chunk) onChunk(payload.chunk)
+
+      // Progress step updates
       if (payload.step && onStep) onStep(payload.step)
+
       if (payload.debug_raw) {
         console.warn('[AstuteIQ] RAW CLAUDE RESPONSE (first 2000 chars):', payload.debug_raw)
       }
+
+      // ── FINAL result ──────────────────────────────────────────────
       if (payload.done) {
         if (payload.error) throw new Error(`Backend: ${payload.error}`)
         if (payload.result) {
-          console.debug('[AstuteIQ] raw result:', JSON.stringify(payload.result).slice(0, 500))
+          console.debug('[AstuteIQ] final result:', JSON.stringify(payload.result).slice(0, 500))
           const normalised = normaliseBackendResult(payload.result)
-          console.debug('[AstuteIQ] checks count:', normalised.checks?.length ?? 0)
-          if (!normalised.checks?.length) {
-            throw new Error('Review completed but returned no checks. Please try again.')
-          }
+          // Ensure checks is always an array — never throw for empty checks
+          normalised.checks = normalised.checks ?? []
+          normalised._streaming = false
+          console.debug('[AstuteIQ] final checks count:', normalised.checks.length)
+          // Push final result to UI immediately
+          onPartialResult?.(normalised)
           return normalised
+        }
+        // done=true but no result — return best partial we have instead of throwing
+        if (latestPartial) {
+          console.warn('[AstuteIQ] done=true without result, using last partial')
+          latestPartial._streaming = false
+          return latestPartial
         }
         throw new Error('Backend sent done=true but no result.')
       }
+
+      // ── PARTIAL result (not done yet) ─────────────────────────────
       if (payload.result && !payload.done) {
-        const nr = normaliseBackendResult(payload.result)
-        if (nr.checks?.length) return nr
+        try {
+          const partial = normaliseBackendResult(payload.result)
+          partial.checks = partial.checks ?? []
+          if (partial.checks.length > 0) {
+            // Deduplicate against previous partial: keep the check with the
+            // longer note when IDs collide, so we never show duplicates.
+            if (latestPartial && latestPartial.checks.length > 0) {
+              const seen = new Map<string, CheckResult>()
+              for (const c of latestPartial.checks) {
+                const key = (c.id || '').toUpperCase().trim() || `__lbl__${(c.label||'').toLowerCase().replace(/[^a-z0-9]/g,'').slice(0,40)}`
+                if (!seen.has(key) || (c.note||'').length > (seen.get(key)!.note||'').length) {
+                  seen.set(key, c)
+                }
+              }
+              for (const c of partial.checks) {
+                const key = (c.id || '').toUpperCase().trim() || `__lbl__${(c.label||'').toLowerCase().replace(/[^a-z0-9]/g,'').slice(0,40)}`
+                if (!seen.has(key) || (c.note||'').length > (seen.get(key)!.note||'').length) {
+                  seen.set(key, c)
+                }
+              }
+              partial.checks = Array.from(seen.values())
+              // Carry forward metadata from the richer source
+              if (!partial.client_name && latestPartial.client_name) partial.client_name = latestPartial.client_name
+              if (!partial.adviser_name && latestPartial.adviser_name) partial.adviser_name = latestPartial.adviser_name
+              if (!partial.summary && latestPartial.summary) partial.summary = latestPartial.summary
+            }
+
+            partial._streaming = true
+            partial.score = calculateScore(partial.checks)
+            latestPartial = partial
+            console.debug('[AstuteIQ] partial result — checks so far:', partial.checks.length)
+            onPartialResult?.(partial)
+          }
+        } catch (e) {
+          console.warn('[AstuteIQ] Failed to parse partial result:', e)
+        }
       }
-      if (payload.error && !payload.done) throw new Error(`Backend: ${payload.error}`)
+
+      // Non-fatal error mid-stream
+      if (payload.error && !payload.done) {
+        console.warn('[AstuteIQ] Mid-stream error (non-fatal):', payload.error)
+      }
     }
   }
+
+  // Stream ended without explicit done — return best partial if available
+  if (latestPartial) {
+    console.warn('[AstuteIQ] SSE stream ended without done event, using last partial result')
+    latestPartial._streaming = false
+    return latestPartial
+  }
+
   throw new Error('SSE stream ended without a result. Try again or reduce document count.')
 }
 
@@ -818,7 +877,6 @@ async function exportToWord(result: ReviewResult, overrides: Record<string, Over
       ]})
     }
 
-    // Group checks by area
     const grouped: Record<string, typeof effectiveChecks> = {}
     effectiveChecks.forEach(c => {
       const area = normaliseArea(c.area) || 'general'
@@ -842,7 +900,6 @@ async function exportToWord(result: ReviewResult, overrides: Record<string, Over
         new Paragraph({ text:'' }),
       )
     })
-    // Remaining areas not in AREA_ORDER
     Object.entries(grouped).forEach(([area, areaChecks]) => {
       if (AREA_ORDER.includes(area)) return
       findingsSections.push(
@@ -858,7 +915,6 @@ async function exportToWord(result: ReviewResult, overrides: Record<string, Over
       )
     })
 
-    // Parse summary into colour-coded sections
     const summaryText = result.summary || ''
     const summaryLabels = ['CONSISTENCY:','STRUCTURE:','PERSONALISATION:','COMPLIANCE:']
     const summaryColours: Record<string,string> = { 'CONSISTENCY:':'B02020','STRUCTURE:':'2A2A3C','PERSONALISATION:':'9A5A00','COMPLIANCE:':'6B2FD9' }
@@ -891,7 +947,6 @@ async function exportToWord(result: ReviewResult, overrides: Record<string, Over
       new Paragraph({ text:'AstuteIQ', heading:HeadingLevel.TITLE, spacing:{ after:120 } }),
       new Paragraph({ text:'SOA Compliance Review Report', heading:HeadingLevel.HEADING_1, spacing:{ after:300 } }),
 
-      // Cover table
       new Table({
         width:{ size:100, type:WidthType.PERCENTAGE },
         rows: [
@@ -955,7 +1010,6 @@ function CollapsibleSummary({ summary, mode }: { summary: string; mode: 'quick' 
   const [expanded, setExpanded] = useState(false)
   if (!summary) return null
 
-  // For quick mode show just first 200 chars collapsed
   const isLong = summary.length > 200
   const displayText = expanded || !isLong ? summary : summary.slice(0, 200) + '…'
 
@@ -977,6 +1031,22 @@ function CollapsibleSummary({ summary, mode }: { summary: string; mode: 'quick' 
 }
 
 /* ============================================================================
+   STREAMING INDICATOR — pulsing banner shown while checks are arriving live
+============================================================================ */
+
+function StreamingBanner({ checkCount, elapsed }: { checkCount: number; elapsed: number }) {
+  return (
+    <div className="flex items-center gap-3 px-4 py-3 rounded-xl bg-[#6B2FD9]/10 border border-[#6B2FD9]/30 animate-pulse">
+      <div className="w-3 h-3 rounded-full bg-[#6B2FD9] animate-ping" />
+      <p className="text-sm text-[#A78BFA] font-medium">
+        Analysing… {checkCount} finding{checkCount !== 1 ? 's' : ''} so far
+        <span className="text-slate-500 font-normal ml-2">({elapsed}s)</span>
+      </p>
+    </div>
+  )
+}
+
+/* ============================================================================
    RESULTS PANEL — unified display for both Quick Check and Full Review
 ============================================================================ */
 
@@ -992,12 +1062,16 @@ interface ResultsPanelProps {
   onExportWord:    () => void
   onExportCsv:     () => void
   onReset:         () => void
+  isStreaming?:     boolean
+  elapsed?:        number
+  streamText?:     string
 }
 
 function ResultsPanel({
   result, overrides, feedback, flaggedCount, overrideCount,
   groupedChecks, onSaveOverride, onClearOverride,
   onExportWord, onExportCsv, onReset,
+  isStreaming, elapsed, streamText,
 }: ResultsPanelProps) {
   const isQuick    = result.mode === 'quick'
   const checks     = result.checks ?? []
@@ -1019,6 +1093,11 @@ function ResultsPanel({
           </p>
         </div>
         <div className="ml-auto flex items-center gap-2 flex-wrap">
+          {isStreaming && (
+            <span className="text-xs font-semibold px-3 py-1 rounded-full bg-[#6B2FD9]/20 text-[#A78BFA] border border-[#6B2FD9]/40 animate-pulse">
+              LIVE
+            </span>
+          )}
           {result.risk_level && (
             <span className={`text-xs font-bold px-3 py-1 rounded-full border ${
               result.risk_level === 'HIGH'   ? 'bg-[#FFF0F0] text-[#B02020] border-[#FFBBBB]' :
@@ -1032,6 +1111,11 @@ function ResultsPanel({
         </div>
       </div>
 
+      {/* Streaming indicator */}
+      {isStreaming && (
+        <StreamingBanner checkCount={checks.length} elapsed={elapsed ?? 0} />
+      )}
+
       {/* Docs reviewed */}
       {result.docs_reviewed?.length > 0 && (
         <p className="text-xs text-slate-500 px-1">
@@ -1043,7 +1127,7 @@ function ResultsPanel({
       <ScoreTiles checks={checks} overrides={overrides} />
 
       {/* Quick Check issue callout — prominent headline before findings */}
-      {isQuick && (
+      {isQuick && !isStreaming && (
         <div className={`flex items-center gap-3 px-4 py-3 rounded-xl border ${
           failCount > 0
             ? 'bg-[#FFF0F0] border-[#FFBBBB]'
@@ -1069,7 +1153,7 @@ function ResultsPanel({
       )}
 
       {/* Summary — collapsible for quick, full-width for full review */}
-      {result.summary && (
+      {result.summary && !isStreaming && (
         isQuick
           ? <CollapsibleSummary summary={result.summary} mode="quick" />
           : <div className="bg-white/5 border-l-4 border-[#6B2FD9] rounded-r-xl px-4 py-3 text-xs text-slate-300 whitespace-pre-line leading-relaxed">
@@ -1077,17 +1161,19 @@ function ResultsPanel({
             </div>
       )}
 
-      {/* AI disclaimer banner */}
-      <div className="flex items-start gap-3 px-4 py-3 rounded-xl bg-[#FFF8EC] border border-[#FFD98A]">
-        <AlertTriangle size={14} className="text-[#9A5A00] shrink-0 mt-0.5" />
-        <p className="text-xs text-[#9A5A00] leading-relaxed">
-          <strong>AI-assisted review — all findings require human verification.</strong>{' '}
-          FAIL and WARNING items must be reviewed in the original documents before the SOA is submitted.
-        </p>
-      </div>
+      {/* AI disclaimer banner — only when finalized */}
+      {!isStreaming && (
+        <div className="flex items-start gap-3 px-4 py-3 rounded-xl bg-[#FFF8EC] border border-[#FFD98A]">
+          <AlertTriangle size={14} className="text-[#9A5A00] shrink-0 mt-0.5" />
+          <p className="text-xs text-[#9A5A00] leading-relaxed">
+            <strong>AI-assisted review — all findings require human verification.</strong>{' '}
+            FAIL and WARNING items must be reviewed in the original documents before the SOA is submitted.
+          </p>
+        </div>
+      )}
 
       {/* Reviewer feedback summary */}
-      {flaggedCount > 0 && (
+      {flaggedCount > 0 && !isStreaming && (
         <div className="px-4 py-3 rounded-xl bg-[#F0EAFF] border border-[#D8C8FF]">
           <p className="text-sm text-[#6B2FD9]">
             <strong>{flaggedCount} finding{flaggedCount > 1 ? 's' : ''} marked as incorrect</strong>
@@ -1097,23 +1183,32 @@ function ResultsPanel({
         </div>
       )}
 
-      {/* Action buttons */}
+      {/* Action buttons — disabled during streaming */}
       <div className="flex items-center gap-2 flex-wrap">
         <button onClick={onExportWord}
-          className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[#0F0F1A] text-white text-xs font-semibold hover:opacity-85 transition-opacity border border-slate-700">
+          disabled={isStreaming}
+          className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[#0F0F1A] text-white text-xs font-semibold hover:opacity-85 transition-opacity border border-slate-700 disabled:opacity-40 disabled:cursor-not-allowed">
           <Download size={13} /> Export Word Report
         </button>
         {flaggedCount > 0 && (
           <button onClick={onExportCsv}
-            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg border border-slate-700 text-slate-300 text-xs font-medium hover:text-white hover:border-slate-500 transition-colors">
+            disabled={isStreaming}
+            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg border border-slate-700 text-slate-300 text-xs font-medium hover:text-white hover:border-slate-500 transition-colors disabled:opacity-40">
             <FileDown size={13} /> Export Feedback CSV
           </button>
         )}
         <button onClick={onReset}
           className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg border border-slate-700 text-slate-400 text-xs font-medium hover:text-white transition-colors ml-auto">
-          <RotateCcw size={13} /> New Review
+          <RotateCcw size={13} /> {isStreaming ? 'Cancel' : 'New Review'}
         </button>
       </div>
+
+      {/* Stream text — raw analysis output shown during streaming */}
+      {isStreaming && streamText && (
+        <pre className="bg-[#0B0B14] border border-slate-800 rounded-xl p-3 text-xs text-slate-500 font-mono overflow-auto max-h-32 whitespace-pre-wrap">
+          {streamText}
+        </pre>
+      )}
 
       {/* Findings — grouped by area — same card UI for both Quick and Full */}
       {checks.length > 0 ? (
@@ -1128,15 +1223,63 @@ function ResultsPanel({
                     {AREA_LABELS[area] || area.toUpperCase()}
                   </p>
                 </div>
-                <div className="px-5 divide-y divide-slate-800/50">
-                  {areaChecks.map(check => (
-                    <FindingRow
-                      key={check.id || check.label}
-                      check={check}
-                      override={overrides[check.id]}
-                      onSaveOverride={onSaveOverride}
-                      onClearOverride={onClearOverride}
-                    />
+                <div className="px-5 py-5 space-y-4">
+                  {areaChecks.map((check, index) => (
+                    <div
+                      key={`${check.id}-${index}`}
+                      className="rounded-2xl border border-white/10 bg-[#101726] p-5 animate-fade-in"
+                    >
+                      <div className="flex items-start gap-4">
+                        {/* STATUS */}
+                        <div
+                          className={`
+                            px-3 py-1 rounded-lg text-xs font-bold uppercase tracking-wide shrink-0
+                            ${
+                              (overrides[check.id]?.newStatus ?? check.status) === 'fail'
+                                ? 'bg-red-500/15 text-red-400 border border-red-500/20'
+                                : (overrides[check.id]?.newStatus ?? check.status) === 'warning'
+                                ? 'bg-yellow-500/15 text-yellow-300 border border-yellow-500/20'
+                                : (overrides[check.id]?.newStatus ?? check.status) === 'pass'
+                                ? 'bg-green-500/15 text-green-400 border border-green-500/20'
+                                : 'bg-gray-500/15 text-gray-300 border border-gray-500/20'
+                            }
+                          `}
+                        >
+                          {(overrides[check.id]?.newStatus ?? check.status) === 'na' ? 'N/A' : (overrides[check.id]?.newStatus ?? check.status).toUpperCase()}
+                        </div>
+
+                        {/* CONTENT */}
+                        <div className="flex-1">
+                          <h3 className="text-white font-semibold text-lg">
+                            {check.label}
+                          </h3>
+
+                          <p className="mt-2 text-gray-400 leading-7 whitespace-pre-line">
+                            {check.note}
+                          </p>
+
+                          {/* Override display */}
+                          {overrides[check.id] && overrides[check.id].newStatus !== overrides[check.id].originalStatus && (
+                            <p className="text-xs text-[#9A5A00] mt-1 font-medium">
+                              Overridden: {overrides[check.id].originalStatus.toUpperCase()} → {overrides[check.id].newStatus.toUpperCase()}
+                            </p>
+                          )}
+                          {overrides[check.id]?.comment && (
+                            <p className="text-xs text-[#9A5A00] italic mt-0.5">Comment: {overrides[check.id].comment}</p>
+                          )}
+
+                          {/* Interactive override controls — disabled during streaming */}
+                          {!isStreaming && (
+                            <InlineOverrideControls
+                              check={check}
+                              override={overrides[check.id]}
+                              onSaveOverride={onSaveOverride}
+                              onClearOverride={onClearOverride}
+                            />
+                          )}
+                        </div>
+                      </div>
+                    </div>
                   ))}
                 </div>
               </div>
@@ -1166,15 +1309,66 @@ function ResultsPanel({
           }
         </div>
       ) : (
-        /* No checks returned — show summary as primary content */
-        result.summary && (
-          <div className="bg-white/5 border-l-4 border-[#6B2FD9] rounded-r-xl px-4 py-3 text-sm text-slate-300 whitespace-pre-line leading-relaxed">
-            {result.summary}
+        /* No checks yet during streaming — show placeholder */
+        isStreaming ? (
+          <div className="flex flex-col items-center justify-center py-12 gap-3">
+            <div className="w-8 h-8 border-2 border-[#6B2FD9] border-t-transparent rounded-full animate-spin" />
+            <p className="text-sm text-slate-500">Waiting for first findings…</p>
           </div>
+        ) : (
+          result.summary && (
+            <div className="bg-white/5 border-l-4 border-[#6B2FD9] rounded-r-xl px-4 py-3 text-sm text-slate-300 whitespace-pre-line leading-relaxed">
+              {result.summary}
+            </div>
+          )
         )
       )}
 
     </div>
+  )
+}
+
+/* ============================================================================
+   INLINE OVERRIDE CONTROLS — extracted for use in both card and row layouts
+============================================================================ */
+
+function InlineOverrideControls({
+  check, override, onSaveOverride, onClearOverride,
+}: {
+  check: CheckResult
+  override: Override | undefined
+  onSaveOverride: (id: string, ov: Override) => void
+  onClearOverride: (id: string) => void
+}) {
+  const [showPanel, setShowPanel] = useState(false)
+
+  if (showPanel) {
+    return (
+      <OverridePanel
+        checkId={check.id}
+        checkLabel={check.label}
+        originalStatus={check.status}
+        currentOverride={override}
+        onSave={onSaveOverride}
+        onClear={onClearOverride}
+        onClose={() => setShowPanel(false)}
+      />
+    )
+  }
+
+  return (
+    <button
+      onClick={() => setShowPanel(true)}
+      className={`mt-3 inline-flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg border transition-colors ${
+        override
+          ? 'border-[#FFD98A] text-[#9A5A00] bg-[#FFF8EC] hover:bg-[#FFD98A]/20'
+          : 'border-slate-700 text-slate-400 bg-transparent hover:border-[#FFB347] hover:text-[#9A5A00]'
+      }`}
+    >
+      <Flag size={10} />
+      {override ? 'Edit override' : 'Mark as incorrect'}
+      <ChevronDown size={10} />
+    </button>
   )
 }
 
@@ -1240,9 +1434,6 @@ function UploadZone({ label, num, desc, formats, file, multiple, files, onDrop, 
 
 /* ============================================================================
    INLINE OVERRIDE PANEL — matches screenshot UI exactly
-   Shows below the finding note when "Mark as incorrect" is clicked.
-   Dropdown: Override status… / PASS / WARNING / FAIL / N/A
-   Input: Add comment…  Button: Save
 ============================================================================ */
 
 interface OverridePanelProps {
@@ -1267,12 +1458,10 @@ function OverridePanel({ checkId, checkLabel, originalStatus, currentOverride, o
 
   return (
     <div className="mt-3 flex flex-wrap items-center gap-2">
-      {/* "Marked incorrect" badge — shown once flagged */}
       <span className="px-3 py-1.5 rounded-lg text-xs font-medium border border-[#FFB347]/40 bg-[#FFB347]/10 text-[#FFB347]">
         Marked incorrect
       </span>
 
-      {/* Status dropdown */}
       <select
         value={newStatus}
         onChange={e => setNewStatus(e.target.value as CheckResult['status'] | '')}
@@ -1285,7 +1474,6 @@ function OverridePanel({ checkId, checkLabel, originalStatus, currentOverride, o
         <option value="na">N/A</option>
       </select>
 
-      {/* Comment input */}
       <input
         type="text"
         value={comment}
@@ -1294,7 +1482,6 @@ function OverridePanel({ checkId, checkLabel, originalStatus, currentOverride, o
         className="flex-1 min-w-[160px] px-3 py-1.5 rounded-lg text-xs bg-[#0B0B14] border border-slate-700 text-slate-200 placeholder-slate-600 focus:outline-none focus:border-[#6B2FD9]"
       />
 
-      {/* Save button */}
       <button
         onClick={handleSave}
         disabled={!newStatus}
@@ -1303,7 +1490,6 @@ function OverridePanel({ checkId, checkLabel, originalStatus, currentOverride, o
         Save
       </button>
 
-      {/* Clear button — only if already overridden */}
       {currentOverride && (
         <button onClick={() => { onClear(checkId); onClose() }}
           className="px-3 py-1.5 rounded-lg text-xs text-slate-500 hover:text-slate-300 transition-colors">
@@ -1316,11 +1502,6 @@ function OverridePanel({ checkId, checkLabel, originalStatus, currentOverride, o
 
 /* ============================================================================
    FINDING ROW — matches screenshot UI
-   • FAIL/WARNING badge on left
-   • Bold label + italic note
-   • "Mark as incorrect" button
-   • Inline override panel expands below note
-   • Amber left border + background when flagged
 ============================================================================ */
 
 interface FindingRowProps {
@@ -1335,7 +1516,6 @@ function FindingRow({ check, override, onSaveOverride, onClearOverride }: Findin
   const effectiveStatus = override?.newStatus ?? check.status
   const isFlagged       = !!override
 
-  // Status badge colours matching screenshot
   const badgeStyles: Record<string, string> = {
     pass:    'bg-[#EDFAF3] text-[#1A7A45] border-[#B8EDCF]',
     fail:    'bg-[#FFF0F0] text-[#B02020] border-[#FFBBBB]',
@@ -1348,19 +1528,16 @@ function FindingRow({ check, override, onSaveOverride, onClearOverride }: Findin
       isFlagged ? 'bg-[#FFFBF0] border-l-[3px] border-l-[#FFD98A] pl-3 rounded-r-lg -ml-3 pr-0' : ''
     }`}>
       <div className="flex items-start gap-3">
-        {/* Status badge — left column, matches screenshot */}
         <span className={`shrink-0 mt-0.5 min-w-[68px] text-center px-2 py-0.5 rounded-md text-[10px] font-bold tracking-wide border ${
           badgeStyles[effectiveStatus] || badgeStyles.na
         }`}>
           {effectiveStatus === 'na' ? 'N/A' : effectiveStatus.toUpperCase()}
         </span>
 
-        {/* Content */}
         <div className="flex-1 min-w-0">
           <p className="text-sm font-semibold text-slate-100 leading-snug mb-1">{check.label}</p>
           <p className="text-xs text-slate-400 leading-relaxed italic">{check.note}</p>
 
-          {/* Override status badge — shown when overridden */}
           {isFlagged && override!.newStatus !== override!.originalStatus && (
             <p className="text-xs text-[#9A5A00] mt-1 font-medium">
               Overridden: {override!.originalStatus.toUpperCase()} → {override!.newStatus.toUpperCase()}
@@ -1370,7 +1547,6 @@ function FindingRow({ check, override, onSaveOverride, onClearOverride }: Findin
             <p className="text-xs text-[#9A5A00] italic mt-0.5">Comment: {override!.comment}</p>
           )}
 
-          {/* Override panel — expanded state */}
           {showOverride ? (
             <OverridePanel
               checkId={check.id}
@@ -1382,7 +1558,6 @@ function FindingRow({ check, override, onSaveOverride, onClearOverride }: Findin
               onClose={() => setShowOverride(false)}
             />
           ) : (
-            /* "Mark as incorrect" button — matches screenshot */
             <button
               onClick={() => setShowOverride(true)}
               className={`mt-2 inline-flex items-center gap-1.5 text-xs font-medium px-3 py-1 rounded-lg border transition-colors ${
@@ -1393,7 +1568,7 @@ function FindingRow({ check, override, onSaveOverride, onClearOverride }: Findin
             >
               <Flag size={10} />
               {isFlagged ? 'Edit override' : 'Mark as incorrect'}
-              {isFlagged ? <ChevronDown size={10} /> : <ChevronDown size={10} />}
+              <ChevronDown size={10} />
             </button>
           )}
         </div>
@@ -1470,6 +1645,7 @@ export default function SOAAnalysisPage() {
   const [streamText, setStreamText] = useState('')
   const [overrides,  setOverrides]  = useState<Record<string, Override>>({})
   const [feedback,   setFeedback]   = useState<Record<string, FeedbackEntry>>({})
+  const [isStreaming, setIsStreaming] = useState(false)
 
   const timerRef = useRef<NodeJS.Timeout | null>(null)
   const abortRef = useRef<AbortController | null>(null)
@@ -1516,9 +1692,20 @@ export default function SOAAnalysisPage() {
     setSuppDocs(prev => [...prev, ...docs])
   }, [suppDocs])
 
+  // Callback for progressive partial results from SSE
+  const handlePartialResult = useCallback((partial: ReviewResult) => {
+    setResult(prev => {
+      // If we already have a result with more checks, don't regress
+      if (prev && !prev._streaming && (prev.checks?.length ?? 0) > (partial.checks?.length ?? 0)) {
+        return prev
+      }
+      return partial
+    })
+  }, [])
+
   async function runReview(reviewMode: 'quick' | 'full') {
     if (!soaDoc) { setError('Please upload an SOA.'); return }
-    setLoading(true); setMode(reviewMode)
+    setLoading(true); setMode(reviewMode); setIsStreaming(true)
     setError(null); setResult(null); setOverrides({}); setFeedback({})
     setElapsed(0); setStep(1); setStreamText('')
 
@@ -1565,9 +1752,19 @@ export default function SOAAnalysisPage() {
           try { const e = await response.json(); msg = e.detail ?? msg } catch { /* ignore */ }
           throw new Error(msg)
         }
-        result1 = await readSseStream(response,
+        result1 = await readSseStream(
+          response,
           chunk => setStreamText(prev => prev + chunk),
           s => { setStep(s); updateLiveReview(liveId, { progress: Math.min(s * 18, 90) }) },
+          // Progressive partial result callback — updates UI live
+          (partial) => {
+            handlePartialResult(partial)
+            // Update live review store with current check count
+            updateLiveReview(liveId, {
+              progress: Math.min(40 + (partial.checks?.length ?? 0) * 1.5, 85),
+              score: partial.score ?? 0,
+            })
+          },
         )
       } else {
         const parts = buildContentParts(soaDoc, refDoc, suppDocs, stage1SuppCount)
@@ -1588,15 +1785,33 @@ export default function SOAAnalysisPage() {
             method:'POST', headers:{ 'Content-Type':'application/json', Authorization:`Bearer ${token}` },
             body: JSON.stringify({ mode:'quick', documents }), signal: controller.signal,
           })
-          if (response.ok) { try { result2 = await readSseStream(response, () => {}) } catch { /* stage 2 non-fatal */ } }
+          if (response.ok) {
+            try {
+              result2 = await readSseStream(
+                response,
+                () => {},
+                undefined,
+                // Stage 2 partial results also update the UI progressively
+                (partial) => {
+                  if (result1) {
+                    const merged = mergeResults(result1, partial)
+                    merged._streaming = true
+                    merged.score = calculateScore(merged.checks ?? [])
+                    handlePartialResult(merged)
+                  }
+                },
+              )
+            } catch { /* stage 2 non-fatal */ }
+          }
         } else {
           try { result2 = await callAnthropicDirect(buildStage2SystemPrompt(), buildStage2Parts(soaDoc, remainingSupp), 4_000, controller.signal, () => {}) }
           catch { /* stage 2 non-fatal */ }
         }
       }
 
-      setStep(6); setStreamText('')
+      setStep(6); setStreamText(''); setIsStreaming(false)
       const merged     = mergeResults(result1, result2)
+      merged._streaming = false
       const finalScore = calculateScore(merged.checks ?? [])
       setResult({ ...merged, score: finalScore })
       updateLiveReview(liveId, { status:'complete', progress:100, score: finalScore })
@@ -1604,6 +1819,7 @@ export default function SOAAnalysisPage() {
     } catch (err: any) {
       const msg = err?.message ?? ''
       updateLiveReview(liveId, { status:'failed', progress:100 })
+      setIsStreaming(false)
       setError(
         msg === 'The operation was aborted.' || msg.includes('aborted')
           ? 'Review timed out after 5 minutes. Try removing 1-2 supporting documents or switching large PDFs to Word.'
@@ -1612,7 +1828,7 @@ export default function SOAAnalysisPage() {
     } finally {
       clearTimeout(timeoutId)
       if (timerRef.current) clearInterval(timerRef.current)
-      setLoading(false); setStep(0)
+      setLoading(false); setStep(0); setIsStreaming(false)
     }
   }
 
@@ -1622,6 +1838,7 @@ export default function SOAAnalysisPage() {
     setReviewId(historicReviewId)
     setOverrides({})
     setFeedback({})
+    setIsStreaming(false)
     const serverFeedback = await loadFeedbackFromServer(historicReviewId)
     const lsFeedback     = loadFeedbackFromLS()
     const merged         = { ...lsFeedback, ...serverFeedback }
@@ -1645,9 +1862,14 @@ export default function SOAAnalysisPage() {
   }, [])
 
   function reset() {
+    // If streaming, abort the request
+    if (abortRef.current && isStreaming) {
+      abortRef.current.abort()
+    }
     setSoaDoc(null); setRefDoc(null); setSuppDocs([])
     setResult(null); setError(null); setReviewId('')
     setOverrides({}); setFeedback({}); setStreamText(''); setElapsed(0)
+    setIsStreaming(false); setLoading(false)
   }
 
   const activeSteps   = STEPS[loading ? mode : 'full']
@@ -1664,6 +1886,9 @@ export default function SOAAnalysisPage() {
     })
   }
 
+  // Show results panel when we have any result (including partial streaming results)
+  const showResults = !!result && (result.checks?.length > 0 || !isStreaming)
+
   return (
     <div className="space-y-6 animate-fade-in max-w-5xl">
       <div>
@@ -1673,19 +1898,21 @@ export default function SOAAnalysisPage() {
         <p className="page-sub">AI-powered compliance review — C1-C29 · P1-P10 · Consistency · Structure.</p>
       </div>
 
-      {/* Upload zones */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <UploadZone num={1} label="New SOA *" desc="The SOA being reviewed" formats="DOCX or PDF"
-          file={soaDoc} onDrop={handleSoaDrop} onRemove={() => setSoaDoc(null)} />
-        <UploadZone num={2} label="Reference SOA" desc="Optional — compare structure against this" formats="DOCX or PDF"
-          file={refDoc} onDrop={handleRefDrop} onRemove={() => setRefDoc(null)} />
-        <UploadZone num={3} label="Supporting Documents" desc="Fact find, fee comparison, CGT workings, etc. Up to 10 files."
-          formats="PDF, DOCX, XLSX" multiple files={suppDocs} file={null}
-          onDrop={handleSuppDrop} onRemove={id => setSuppDocs(prev => prev.filter(d => d.id !== id))} />
-      </div>
+      {/* Upload zones — hidden during streaming to save space */}
+      {!isStreaming && !showResults && (
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <UploadZone num={1} label="New SOA *" desc="The SOA being reviewed" formats="DOCX or PDF"
+            file={soaDoc} onDrop={handleSoaDrop} onRemove={() => setSoaDoc(null)} />
+          <UploadZone num={2} label="Reference SOA" desc="Optional — compare structure against this" formats="DOCX or PDF"
+            file={refDoc} onDrop={handleRefDrop} onRemove={() => setRefDoc(null)} />
+          <UploadZone num={3} label="Supporting Documents" desc="Fact find, fee comparison, CGT workings, etc. Up to 10 files."
+            formats="PDF, DOCX, XLSX" multiple files={suppDocs} file={null}
+            onDrop={handleSuppDrop} onRemove={id => setSuppDocs(prev => prev.filter(d => d.id !== id))} />
+        </div>
+      )}
 
-      {/* Run panel */}
-      {!result && (
+      {/* Run panel — shown when no result yet and not streaming with partial results */}
+      {!showResults && !isStreaming && (
         <div className="card space-y-4 border border-slate-800/80 bg-gradient-to-b from-[#11111d] to-[#0B0B14] shadow-2xl shadow-black/30">
           {error && (
             <div className="flex gap-2 items-start p-3 rounded-lg bg-[#FF6B6B]/10 border border-[#FF6B6B]/20 text-sm text-[#FF6B6B]">
@@ -1723,6 +1950,7 @@ export default function SOAAnalysisPage() {
               <p className="text-center text-xs text-slate-600">Quick: FAILs + WARNINGs &nbsp;|&nbsp; ~40s &nbsp;&nbsp; Full: All 39 checks with detailed notes &nbsp;|&nbsp; ~90s</p>
             </div>
           ) : (
+            /* Loading spinner — only shown briefly before first partial arrives */
             <div className="space-y-4">
               <div className="flex items-center gap-2 text-sm text-slate-400">
                 <div className="w-4 h-4 border-2 border-[#6B2FD9] border-t-transparent rounded-full animate-spin" />
@@ -1751,8 +1979,49 @@ export default function SOAAnalysisPage() {
         </div>
       )}
 
-      {/* Results */}
-      {result && (
+      {/* Loading with no partial results yet — brief initial wait state */}
+      {loading && isStreaming && !result && (
+        <div className="card space-y-4 border border-slate-800/80 bg-gradient-to-b from-[#11111d] to-[#0B0B14]">
+          <div className="flex items-center gap-2 text-sm text-slate-400">
+            <div className="w-4 h-4 border-2 border-[#6B2FD9] border-t-transparent rounded-full animate-spin" />
+            <span>{mode === 'quick' ? 'Quick Check' : 'Full Review'} — Analysing documents… ({elapsed}s)</span>
+          </div>
+          <div className="w-full h-1.5 rounded-full bg-slate-800 overflow-hidden">
+            <div className="h-full bg-gradient-to-r from-[#6B2FD9] to-[#A78BFA] transition-all duration-500"
+              style={{ width: `${Math.min(step * 18, 100)}%` }} />
+          </div>
+          <div className="flex flex-col gap-1.5">
+            {activeSteps.map((s, i) => {
+              const done = i + 1 < step, active = i + 1 === step
+              return (
+                <div key={s} className={`flex items-center gap-2 text-xs transition-all ${done ? 'text-[#2DD4A0]' : active ? 'text-[#A78BFA] font-medium' : 'text-slate-600'}`}>
+                  {done ? <CheckCircle size={13} /> : active ? <span className="text-[#A78BFA]">○</span> : <span className="text-slate-600">○</span>}
+                  {s}
+                </div>
+              )
+            })}
+          </div>
+          {streamText && (
+            <pre className="bg-[#0B0B14] border border-slate-800 rounded-xl p-3 text-xs text-slate-500 font-mono overflow-auto max-h-32 whitespace-pre-wrap">{streamText}</pre>
+          )}
+        </div>
+      )}
+
+      {/* Error after streaming */}
+      {error && !loading && !showResults && (
+        <div className="card border border-slate-800/80 bg-gradient-to-b from-[#11111d] to-[#0B0B14]">
+          <div className="flex gap-2 items-start p-3 rounded-lg bg-[#FF6B6B]/10 border border-[#FF6B6B]/20 text-sm text-[#FF6B6B]">
+            <AlertCircle size={14} className="shrink-0 mt-0.5" /><span>{error}</span>
+          </div>
+          <button onClick={reset}
+            className="mt-3 inline-flex items-center gap-1.5 px-4 py-2 rounded-lg border border-slate-700 text-slate-400 text-xs font-medium hover:text-white transition-colors">
+            <RotateCcw size={13} /> Try Again
+          </button>
+        </div>
+      )}
+
+      {/* Results — shown progressively during streaming AND after completion */}
+      {showResults && result && (
         <ResultsPanel
           result={result}
           overrides={overrides}
@@ -1765,6 +2034,9 @@ export default function SOAAnalysisPage() {
           onExportWord={() => exportToWord(result, overrides)}
           onExportCsv={() => exportFeedbackCsv(feedback, result.client_name)}
           onReset={reset}
+          isStreaming={isStreaming}
+          elapsed={elapsed}
+          streamText={streamText}
         />
       )}
     </div>
