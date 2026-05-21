@@ -1052,13 +1052,14 @@ async def stream_review(payload: ReviewPayload):
                 f"\n\n"
             )
 
+    # soa.py — bottom of stream_review()
     return StreamingResponse(
-        generate(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-            "Access-Control-Allow-Origin": "*",
-        },
-    )
+    generate(),
+    media_type="text/event-stream",
+    headers={
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+        "X-Accel-Buffering": "no",
+        #  "Access-Control-Allow-Origin": "*",   ← remove this
+    },
+)
