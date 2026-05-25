@@ -79,9 +79,15 @@ export async function registerApi(
     },
   })
 
-  if (error || !data.user) {
-    throw new Error(error?.message ?? 'Registration failed.')
-  }
+  if (error) {
+  console.error('SUPABASE SIGNUP ERROR:', error)
+
+  throw new Error(error.message)
+}
+
+if (!data.user) {
+  throw new Error('No user returned from Supabase.')
+}
 
   const user: AuthUser = {
     id: data.user.id,
