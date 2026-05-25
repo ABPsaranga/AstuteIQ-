@@ -119,17 +119,5 @@ export const useReviewStore = create<ReviewState>(
 
         lastUpdated: Date.now(),
       }),
-
-      // ✅ FIX: added missing closing parenthesis
-
-      // ✅ FIX: added missing closing curly brace
-
-      // ✅ FIX: added missing closing parenthesis for create function
-
-      // ✅ FIX: added missing closing parenthesis for set function
-
-      // ✅ FIX: added missing closing parenthesis for updateReview function
-      
-      // ✅ FIX: added missing closing parenthesis for removeReview function
   })
 )

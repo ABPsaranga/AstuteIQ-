@@ -12,6 +12,8 @@ import {
   Activity,
   Globe,
   ChevronRight,
+  LogIn,
+  UserPlus,
 } from 'lucide-react'
 
 const STATS = [
@@ -203,31 +205,25 @@ export default function HomePage() {
               with real-time AI review workflows.
             </p>
           </div>
-
+          
           {/* CTA */}
           <div className="flex flex-col sm:flex-row gap-4 items-center">
-            <Link
-              to="/soa-analysis"
-              className="group inline-flex items-center gap-2 px-7 py-3.5 rounded-2xl font-semibold text-sm text-white transition-all duration-200 hover:scale-[1.02]"
-              style={{
-                background:
-                  'linear-gradient(135deg, #6B2FD9 0%, #8B5CF6 100%)',
-                boxShadow: '0 0 35px rgba(107,47,217,0.45)',
-              }}
-            >
-              Run your first review
 
-              <ArrowRight
-                size={15}
-                className="group-hover:translate-x-1 transition-transform"
-              />
+            {/* Login */}
+            <Link
+              to="/login"
+              className="inline-flex items-center gap-2 px-7 py-3.5 rounded-2xl font-medium text-sm text-slate-300 border border-slate-700 hover:border-[#6B2FD9] hover:text-white hover:bg-[#6B2FD9]/10 transition-all duration-200"
+            >
+              Login
             </Link>
 
+            {/* Register */}
             <Link
-              to="/dashboard"
-              className="inline-flex items-center gap-2 px-7 py-3.5 rounded-2xl font-medium text-sm text-slate-300 border border-slate-700 hover:border-slate-500 hover:text-white hover:bg-slate-800/50 transition-all"
+              to="/register"
+              className="inline-flex items-center gap-2 px-7 py-3.5 rounded-2xl font-semibold text-sm text-white border border-[#2DD4A0]/30 bg-[#2DD4A0]/10 hover:bg-[#2DD4A0]/20 transition-all duration-200"
             >
-              Open dashboard
+              Create Account
+              <ChevronRight size={15} />
             </Link>
           </div>
 

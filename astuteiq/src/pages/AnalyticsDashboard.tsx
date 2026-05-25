@@ -98,7 +98,7 @@ export default function AnalyticsDashboard() {
       {
         name: 'WARNING',
         value: data.finding_distribution.warning,
-        color: '#f97316',
+        color: '#f9f916',
       },
       {
         name: 'NA',

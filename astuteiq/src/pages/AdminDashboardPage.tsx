@@ -1,30 +1,64 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, useCallback } from 'react'
 import {
   Users,
   FileSearch,
   TrendingUp,
   AlertTriangle,
   UserPlus,
-  Activity,
   Shield,
-  Clock,
+  RefreshCw,
+  AlertCircle,
+  CheckCircle,
+  XCircle,
+  ArrowUpRight,
+  ArrowDownRight,
+  Radio,
 } from 'lucide-react'
 
-import StatCard from '../components/ui/StatCard'
-import ActivityChart from '../components/ActivityChart'
-import InviteUserModal from '../components/InviteUserModal'
-import RoleGuard from '../components/RoleGuard'
+import {
+  AreaChart,
+  Area,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+  PieChart,
+  Pie,
+  Cell,
+} from 'recharts'
 
-import apiClient from '../lib/api'
-import { useReviewStore } from '../store/liveReviewStore'
+import api from '../lib/api'
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GIF Imports
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GIF URLs (public assets)
+// ─────────────────────────────────────────────────────────────────────────────
+
+const totalUsersGif = '/assets/kpi/total-users.gif'
+const mrrGif = '/assets/kpi/mrr.gif'
+const reviewsGif = '/assets/kpi/reviews.gif'
+const avgScoreGif = '/assets/kpi/avg-score.gif'
+const failedReviewsGif = '/assets/kpi/failed-reviews.gif'
+const systemHealthGif = '/assets/kpi/system-health.gif'
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Types
+// ─────────────────────────────────────────────────────────────────────────────
 
 interface AdminUser {
   id: string
   name: string
   email: string
+  plan: 'Enterprise' | 'Pro' | 'Starter'
   reviews: number
   avgScore: number
+  status: 'active' | 'inactive' | 'at-risk' | 'new'
   lastActive?: string
+  churnRisk?: number
 }
 
 interface AdminStats {
@@ -34,458 +68,590 @@ interface AdminStats {
   failedReviews: number
   processingReviews: number
   avgScore: number
+  mrr: number
+  mrrGrowth: number
 }
 
-export default function AdminDashboardPage() {
-  const [showInvite, setShowInvite] = useState(false)
+interface AlertItem {
+  id: string
+  type: 'danger' | 'warning' | 'info'
+  title: string
+  description: string
+  time: string
+}
 
-  const [loading, setLoading] = useState(true)
+interface RevenueData {
+  month: string
+  mrr: number
+  reviews: number
+}
 
-  const [users, setUsers] = useState<AdminUser[]>([])
+interface PlanData {
+  name: string
+  value: number
+  color: string
+}
 
-  const [stats, setStats] = useState<AdminStats>({
-    totalUsers: 0,
-    totalReviews: 0,
-    completedReviews: 0,
-    failedReviews: 0,
-    processingReviews: 0,
-    avgScore: 0,
+type UserFilter = 'all' | 'at-risk' | 'inactive' | 'new'
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+function fmtNumber(n: number): string {
+  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M'
+  if (n >= 1_000) return (n / 1_000).toFixed(1) + 'k'
+  return String(n)
+}
+
+function fmtCurrency(n: number): string {
+  return '$' + n.toLocaleString('en-US', {
+    maximumFractionDigits: 0,
   })
+}
 
-  const { reviews: liveReviews, lastUpdated } =
-    useReviewStore()
+function timeAgo(iso?: string): string {
+  if (!iso) return '—'
 
-  async function loadDashboard() {
-    try {
-      setLoading(true)
+  const diff =
+    Date.now() - new Date(iso).getTime()
 
-      // reviews
-      const reviewRes = await apiClient.get(
-        '/api/reviews/history?page=1&limit=1000'
-      )
+  const m = Math.floor(diff / 60000)
 
-      // users
-      let usersRes: any = { data: [] }
+  if (m < 1) return 'just now'
+  if (m < 60) return `${m}m ago`
 
-      try {
-        usersRes = await apiClient.get(
-          '/api/admin/users'
-        )
-      } catch {
-        //
-      }
+  const h = Math.floor(m / 60)
 
-      const backendReviews =
-        reviewRes.data?.reviews ?? []
+  if (h < 24) return `${h}h ago`
 
-      const merged = new Map<string, any>()
+  return `${Math.floor(h / 24)}d ago`
+}
 
-      backendReviews.forEach((r: any) =>
-        merged.set(r.id, r)
-      )
+// ─────────────────────────────────────────────────────────────────────────────
+// KPI Card
+// ─────────────────────────────────────────────────────────────────────────────
 
-      liveReviews.forEach((r) =>
-        merged.set(r.id, r)
-      )
-
-      const allReviews = Array.from(
-        merged.values()
-      )
-
-      const completed = allReviews.filter(
-        (r) => r.status === 'complete'
-      )
-
-      const failed = allReviews.filter(
-        (r) => r.status === 'failed'
-      )
-
-      const processing = allReviews.filter(
-        (r) => r.status === 'processing'
-      )
-
-      const avgScore = completed.length
-        ? Math.round(
-            completed.reduce(
-              (sum: number, r: any) =>
-                sum + (r.score ?? 0),
-              0
-            ) / completed.length
-          )
-        : 0
-
-      setStats({
-        totalUsers:
-          usersRes.data?.length ?? 0,
-
-        totalReviews: allReviews.length,
-
-        completedReviews: completed.length,
-
-        failedReviews: failed.length,
-
-        processingReviews: processing.length,
-
-        avgScore,
-      })
-
-      // build top users
-      const grouped = new Map<string, AdminUser>()
-
-      allReviews.forEach((review: any) => {
-        const email =
-          review.userEmail ??
-          review.email ??
-          'unknown@example.com'
-
-        const existing = grouped.get(email)
-
-        if (!existing) {
-          grouped.set(email, {
-            id: email,
-
-            name:
-              review.userName ??
-              review.name ??
-              email.split('@')[0],
-
-            email,
-
-            reviews: 1,
-
-            avgScore:
-              review.score ?? 0,
-
-            lastActive:
-              review.createdAt,
-          })
-        } else {
-          existing.reviews += 1
-
-          existing.avgScore =
-            Math.round(
-              (existing.avgScore +
-                (review.score ?? 0)) /
-                2
-            )
-
-          if (
-            new Date(
-              review.createdAt
-            ).getTime() >
-            new Date(
-              existing.lastActive ??
-                0
-            ).getTime()
-          ) {
-            existing.lastActive =
-              review.createdAt
-          }
-        }
-      })
-
-      const topUsers = Array.from(
-        grouped.values()
-      )
-        .sort(
-          (a, b) =>
-            b.reviews - a.reviews
-        )
-        .slice(0, 10)
-
-      setUsers(topUsers)
-    } catch (err) {
-      console.error(
-        'Admin dashboard error:',
-        err
-      )
-    } finally {
-      setLoading(false)
-    }
+interface KpiCardProps {
+  label: string
+  value: string | number
+  icon?: React.ElementType
+  image?: string
+  trend?: {
+    value: string
+    up: boolean
   }
+  sub?: string
+  variant?:
+    | 'default'
+    | 'success'
+    | 'danger'
+    | 'warning'
+    | 'info'
+}
+
+function KpiCard({
+  label,
+  value,
+  icon: Icon,
+  image,
+  trend,
+  sub,
+  variant = 'default',
+}: KpiCardProps) {
+  const variantColors: Record<string, string> =
+    {
+      default: 'text-slate-100',
+      success: 'text-emerald-400',
+      danger: 'text-red-400',
+      warning: 'text-amber-400',
+      info: 'text-sky-400',
+    }
+
+  return (
+    <div
+      className="
+        group relative overflow-hidden rounded-3xl
+        border border-slate-800/80
+        bg-gradient-to-br from-[#07142b] via-[#091b36] to-[#07142b]
+        p-5
+        transition-all duration-300
+        hover:-translate-y-1
+        hover:border-violet-500/30
+        hover:shadow-[0_0_40px_rgba(139,92,246,0.12)]
+      "
+    >
+      {/* Glow */}
+      <div
+        className="
+          absolute -right-12 -top-12
+          h-40 w-40 rounded-full
+          bg-sky-500/10 blur-3xl
+        "
+      />
+
+      {/* Top Right Media */}
+      <div className="absolute right-4 top-4">
+        {image ? (
+          <div
+            className="
+              flex h-16 w-16 items-center justify-center
+              rounded-2xl
+              border border-slate-700/60
+              bg-slate-900/40
+              backdrop-blur-sm
+            "
+          >
+            <img
+              src={image}
+              alt={label}
+              className="
+                h-10 w-10 object-contain
+                opacity-95
+                transition-transform duration-300
+                group-hover:scale-110
+              "
+            />
+          </div>
+        ) : (
+          Icon && (
+            <div
+              className="
+                flex h-14 w-14 items-center justify-center
+                rounded-2xl
+                border border-slate-700
+                bg-slate-800/70
+              "
+            >
+              <Icon
+                size={24}
+                className="text-slate-300"
+              />
+            </div>
+          )
+        )}
+      </div>
+
+      {/* Label */}
+      <p
+        className="
+          mb-4 text-[11px]
+          uppercase tracking-[0.28em]
+          text-slate-500
+        "
+      >
+        {label}
+      </p>
+
+      {/* Value */}
+      <h3
+        className={`
+          text-4xl font-bold tracking-tight
+          ${variantColors[variant]}
+        `}
+      >
+        {value}
+      </h3>
+
+      {/* Trend */}
+      {(trend || sub) && (
+        <div className="mt-5 flex items-center gap-2">
+          {trend && (
+            <>
+              {trend.up ? (
+                <ArrowUpRight
+                  size={15}
+                  className="text-emerald-400"
+                />
+              ) : (
+                <ArrowDownRight
+                  size={15}
+                  className="text-red-400"
+                />
+              )}
+
+              <span
+                className={`text-sm font-medium ${
+                  trend.up
+                    ? 'text-emerald-400'
+                    : 'text-red-400'
+                }`}
+              >
+                {trend.value}
+              </span>
+            </>
+          )}
+
+          {sub && (
+            <span className="text-xs text-slate-500">
+              {sub}
+            </span>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Alerts
+// ─────────────────────────────────────────────────────────────────────────────
+
+const ALERT_ICONS = {
+  danger: (
+    <XCircle
+      size={14}
+      className="text-red-400"
+    />
+  ),
+  warning: (
+    <AlertCircle
+      size={14}
+      className="text-amber-400"
+    />
+  ),
+  info: (
+    <CheckCircle
+      size={14}
+      className="text-sky-400"
+    />
+  ),
+}
+
+const ALERT_BG = {
+  danger:
+    'border-red-500/20 bg-red-500/10',
+  warning:
+    'border-amber-500/20 bg-amber-500/10',
+  info: 'border-sky-500/20 bg-sky-500/10',
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Main Page
+// ─────────────────────────────────────────────────────────────────────────────
+
+export default function AdminDashboardPage() {
+  const [loading, setLoading] =
+    useState(true)
+
+  const [stats, setStats] =
+    useState<AdminStats>({
+      totalUsers: 0,
+      totalReviews: 0,
+      completedReviews: 0,
+      failedReviews: 0,
+      processingReviews: 0,
+      avgScore: 0,
+      mrr: 0,
+      mrrGrowth: 0,
+    })
+
+  const [users, setUsers] = useState<
+    AdminUser[]
+  >([])
+
+  const [alerts, setAlerts] = useState<
+    AlertItem[]
+  >([])
+
+  const [revenueData, setRevenueData] =
+    useState<RevenueData[]>([])
+
+  const [planData, setPlanData] =
+    useState<PlanData[]>([])
+
+  const [userFilter, setUserFilter] =
+    useState<UserFilter>('all')
+
+  const [lastUpdated, setLastUpdated] =
+    useState(new Date())
+
+  const [showInvite, setShowInvite] =
+    useState(false)
+
+  const [inviteEmail, setInviteEmail] =
+    useState('')
+
+  const [invitePlan, setInvitePlan] =
+    useState<
+      'Starter' | 'Pro' | 'Enterprise'
+    >('Starter')
+
+  const loadDashboard = useCallback(
+    async () => {
+      try {
+        setLoading(true)
+
+        const [
+          statsRes,
+          usersRes,
+          alertsRes,
+          revenueRes,
+          plansRes,
+        ] = await Promise.all([
+          api.get<AdminStats>(
+            '/admin/stats'
+          ),
+          api.get<AdminUser[]>(
+            '/admin/users'
+          ),
+          api.get<AlertItem[]>(
+            '/admin/alerts'
+          ),
+          api.get<RevenueData[]>(
+            '/admin/revenue'
+          ),
+          api.get<PlanData[]>(
+            '/admin/plans'
+          ),
+        ])
+
+        setStats(statsRes.data)
+
+        setUsers(
+          Array.isArray(usersRes.data)
+            ? usersRes.data
+            : []
+        )
+
+        setAlerts(
+          Array.isArray(alertsRes.data)
+            ? alertsRes.data
+            : []
+        )
+
+        setRevenueData(
+          Array.isArray(revenueRes.data)
+            ? revenueRes.data
+            : []
+        )
+
+        setPlanData(
+          Array.isArray(plansRes.data)
+            ? plansRes.data
+            : []
+        )
+
+        setLastUpdated(new Date())
+      } catch (err) {
+        console.error(
+          'Admin dashboard error:',
+          err
+        )
+      } finally {
+        setLoading(false)
+      }
+    },
+    []
+  )
 
   useEffect(() => {
     loadDashboard()
 
-    const interval = setInterval(() => {
-      loadDashboard()
-    }, 15000)
+    const iv = setInterval(
+      loadDashboard,
+      15000
+    )
 
-    return () => clearInterval(interval)
-  }, [lastUpdated])
+    return () => clearInterval(iv)
+  }, [loadDashboard])
 
   const systemHealth = useMemo(() => {
     if (!stats.totalReviews)
       return 'Healthy'
 
-    const failureRate =
+    const rate =
       (stats.failedReviews /
         stats.totalReviews) *
       100
 
-    if (failureRate >= 20)
-      return 'Critical'
-
-    if (failureRate >= 10)
-      return 'Warning'
+    if (rate >= 20) return 'Critical'
+    if (rate >= 10) return 'Warning'
 
     return 'Healthy'
   }, [stats])
 
+  const healthVariant =
+    systemHealth === 'Healthy'
+      ? 'success'
+      : systemHealth === 'Warning'
+      ? 'warning'
+      : 'danger'
+
   return (
-    <RoleGuard roles="admin">
-      <div className="space-y-6 animate-fade-in">
+    <div className="animate-fade-in space-y-6 text-slate-300">
+      {/* Header */}
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-bold text-white">
+            Admin command center
+          </h1>
 
-        {/* Header */}
-        <div className="flex items-start justify-between flex-wrap gap-4">
-          <div>
-            <h1 className="page-header">
-              Admin Dashboard
-            </h1>
+          <p className="mt-1 text-sm text-slate-500">
+            Real-time platform health,
+            revenue & user operations ·{' '}
+            <span className="text-slate-400">
+              Updated{' '}
+              {timeAgo(
+                lastUpdated.toISOString()
+              )}
+            </span>
+          </p>
+        </div>
 
-            <p className="page-sub">
-              Real-time platform analytics,
-              reviews, user activity and
-              operational monitoring.
-            </p>
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-1.5 text-xs font-medium text-emerald-400">
+            <Radio
+              size={10}
+              className="animate-pulse"
+            />
+            LIVE
           </div>
+
+          <button
+            onClick={loadDashboard}
+            className="
+              flex items-center gap-2 rounded-xl
+              border border-slate-700
+              bg-slate-900/50
+              px-4 py-2 text-sm
+              transition-all duration-200
+              hover:bg-slate-800
+            "
+          >
+            <RefreshCw size={14} />
+            Refresh
+          </button>
 
           <button
             onClick={() =>
               setShowInvite(true)
             }
-            className="btn-primary"
+            className="
+              group relative overflow-hidden rounded-xl
+              bg-gradient-to-r from-emerald-400 to-teal-500
+              px-5 py-2.5 text-sm font-semibold
+              text-slate-900
+              shadow-lg shadow-emerald-500/20
+              transition-all duration-200
+              hover:scale-[1.02]
+            "
           >
-            <UserPlus size={14} />
-            Invite user
+            <span className="relative z-10 flex items-center gap-2">
+              <UserPlus
+                size={15}
+                className="
+                  transition-transform
+                  group-hover:rotate-6
+                "
+              />
+
+              Invite User
+            </span>
           </button>
         </div>
-
-        {/* Top stats */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-6 gap-4">
-
-          <StatCard
-            label="Total users"
-            value={
-              loading
-                ? '...'
-                : stats.totalUsers
-            }
-            icon={Users}
-          />
-
-          <StatCard
-            label="Total reviews"
-            value={
-              loading
-                ? '...'
-                : stats.totalReviews
-            }
-            icon={FileSearch}
-            variant="success"
-          />
-
-          <StatCard
-            label="Avg score"
-            value={
-              loading
-                ? '...'
-                : `${stats.avgScore}%`
-            }
-            icon={TrendingUp}
-            variant="success"
-          />
-
-          <StatCard
-            label="Failed reviews"
-            value={
-              loading
-                ? '...'
-                : stats.failedReviews
-            }
-            icon={AlertTriangle}
-            variant="danger"
-          />
-
-          <StatCard
-            label="Processing"
-            value={
-              loading
-                ? '...'
-                : stats.processingReviews
-            }
-            icon={Clock}
-            variant="warning"
-          />
-
-          <StatCard
-            label="System health"
-            value={systemHealth}
-            icon={Shield}
-            variant={
-              systemHealth ===
-              'Healthy'
-                ? 'success'
-                : systemHealth ===
-                  'Warning'
-                ? 'warning'
-                : 'danger'
-            }
-          />
-        </div>
-
-        {/* Activity */}
-        <div className="card">
-          <div className="flex items-center justify-between mb-4">
-            <div>
-              <h2 className="text-sm font-semibold text-white">
-                Platform activity
-              </h2>
-
-              <p className="text-xs text-slate-500 mt-1">
-                Live review volume and
-                scoring trends.
-              </p>
-            </div>
-
-            <div className="flex items-center gap-2 text-xs text-[#2DD4A0]">
-              <Activity
-                size={12}
-                className="animate-pulse"
-              />
-              LIVE
-            </div>
-          </div>
-
-          <ActivityChart height={220} />
-        </div>
-
-        {/* Top users */}
-        <div className="card p-0 overflow-hidden">
-
-          <div className="px-5 py-4 border-b border-slate-800 flex items-center justify-between">
-            <div>
-              <h2 className="text-sm font-semibold text-white">
-                Top users by review volume
-              </h2>
-
-              <p className="text-xs text-slate-500 mt-1">
-                Updated automatically in
-                real time.
-              </p>
-            </div>
-
-            <div className="text-xs text-slate-500">
-              {users.length} users
-            </div>
-          </div>
-
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-slate-800 bg-slate-900/40 text-xs text-slate-500 uppercase tracking-wide">
-                <th className="text-left px-5 py-3">
-                  User
-                </th>
-
-                <th className="text-left px-5 py-3">
-                  Reviews
-                </th>
-
-                <th className="text-left px-5 py-3">
-                  Avg score
-                </th>
-
-                <th className="text-left px-5 py-3">
-                  Last active
-                </th>
-              </tr>
-            </thead>
-
-            <tbody>
-
-              {loading &&
-                [...Array(6)].map(
-                  (_, i) => (
-                    <tr
-                      key={i}
-                      className="border-b border-slate-800/40"
-                    >
-                      <td className="px-5 py-4">
-                        <div className="skeleton h-4 rounded w-40" />
-                      </td>
-
-                      <td className="px-5 py-4">
-                        <div className="skeleton h-4 rounded w-16" />
-                      </td>
-
-                      <td className="px-5 py-4">
-                        <div className="skeleton h-4 rounded w-20" />
-                      </td>
-
-                      <td className="px-5 py-4">
-                        <div className="skeleton h-4 rounded w-24" />
-                      </td>
-                    </tr>
-                  )
-                )}
-
-              {!loading &&
-                users.map((u) => (
-                  <tr
-                    key={u.email}
-                    className="border-b border-slate-800/40 hover:bg-slate-800/20 transition-colors"
-                  >
-                    <td className="px-5 py-4">
-                      <p className="text-slate-200 font-medium">
-                        {u.name}
-                      </p>
-
-                      <p className="text-xs text-slate-500 mt-1">
-                        {u.email}
-                      </p>
-                    </td>
-
-                    <td className="px-5 py-4 text-slate-300 font-medium">
-                      {u.reviews}
-                    </td>
-
-                    <td className="px-5 py-4">
-                      <span
-                        className={`font-semibold ${
-                          u.avgScore >= 80
-                            ? 'text-[#2DD4A0]'
-                            : u.avgScore >=
-                              60
-                            ? 'text-[#FFB347]'
-                            : 'text-[#FF6B6B]'
-                        }`}
-                      >
-                        {u.avgScore}%
-                      </span>
-                    </td>
-
-                    <td className="px-5 py-4 text-xs text-slate-500">
-                      {u.lastActive
-                        ? new Date(
-                            u.lastActive
-                          ).toLocaleString()
-                        : '—'}
-                    </td>
-                  </tr>
-                ))}
-
-            </tbody>
-          </table>
-        </div>
-
-        {showInvite && (
-          <InviteUserModal
-            onClose={() =>
-              setShowInvite(false)
-            }
-          />
-        )}
       </div>
-    </RoleGuard>
+
+      {/* KPI Cards */}
+      <div
+        className="
+          grid grid-cols-1 gap-5
+          sm:grid-cols-2
+          xl:grid-cols-3
+          2xl:grid-cols-6
+        "
+      >
+        <KpiCard
+          label="Total users"
+          value={
+            loading
+              ? '...'
+              : stats.totalUsers.toLocaleString()
+          }
+          image={totalUsersGif}
+          trend={{
+            value: '+124 this month',
+            up: true,
+          }}
+        />
+
+        <KpiCard
+          label="MRR"
+          value={
+            loading
+              ? '...'
+              : fmtCurrency(stats.mrr)
+          }
+          image={mrrGif}
+          trend={{
+            value: `${stats.mrrGrowth}% vs last mo.`,
+            up: true,
+          }}
+          variant="success"
+        />
+
+        <KpiCard
+          label="Total reviews"
+          value={
+            loading
+              ? '...'
+              : fmtNumber(stats.totalReviews)
+          }
+          image={reviewsGif}
+          trend={{
+            value: '+892 this week',
+            up: true,
+          }}
+          variant="info"
+        />
+
+        <KpiCard
+          label="Avg score"
+          value={
+            loading
+              ? '...'
+              : `${stats.avgScore}%`
+          }
+          image={avgScoreGif}
+          trend={{
+            value: '1.2% vs last wk.',
+            up: false,
+          }}
+          variant="warning"
+        />
+
+        <KpiCard
+          label="Failed reviews"
+          value={
+            loading
+              ? '...'
+              : stats.failedReviews
+          }
+          image={failedReviewsGif}
+          trend={{
+            value: `${(
+              (stats.failedReviews /
+                (stats.totalReviews ||
+                  1)) *
+              100
+            ).toFixed(1)}% failure rate`,
+            up: false,
+          }}
+          variant="danger"
+        />
+
+        <KpiCard
+          label="System health"
+          value={
+            loading
+              ? '...'
+              : systemHealth
+          }
+          image={systemHealthGif}
+          sub={`${stats.processingReviews} processing`}
+          variant={healthVariant}
+        />
+      </div>
+    </div>
   )
 }

@@ -423,55 +423,6 @@ export default function UserDashboardPage() {
             )}
           </div>
         </div>
-
-        {/* ── Quick actions ── */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pb-6">
-          {[
-            {
-              to:      '/soa-analysis',
-              icon:    PlayCircle,
-              color:   '#6B2FD9',
-              bg:      'rgba(107,47,217,0.08)',
-              border:  'rgba(107,47,217,0.2)',
-              hoverBg: 'rgba(107,47,217,0.12)',
-              title:   'Run a review',
-              sub:     'Upload a PDF or DOCX for AI compliance review',
-            },
-            {
-              to:      '/history',
-              icon:    Clock,
-              color:   '#A78BFA',
-              bg:      'rgba(107,47,217,0.05)',
-              border:  'rgba(255,255,255,0.05)',
-              hoverBg: 'rgba(107,47,217,0.08)',
-              title:   'Review history',
-              sub:     'Browse all past reviews and findings',
-            },
-          ].map(({ to, icon: Icon, color, bg, border, title, sub }) => (
-            <Link
-              key={to}
-              to={to}
-              className="group flex items-center gap-4 p-5 rounded-2xl transition-all duration-200 hover:-translate-y-0.5"
-              style={{ background: bg, border: `1px solid ${border}` }}
-            >
-              <div
-                className="p-3 rounded-xl shrink-0 transition-transform group-hover:scale-105"
-                style={{ background: `${color}18`, border: `1px solid ${color}25` }}
-              >
-                <Icon size={18} style={{ color }} />
-              </div>
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-semibold text-white">{title}</p>
-                <p className="text-xs text-slate-500 mt-0.5">{sub}</p>
-              </div>
-              <ArrowRight
-                size={15}
-                className="text-slate-700 group-hover:text-slate-400 group-hover:translate-x-0.5 transition-all"
-              />
-            </Link>
-          ))}
-        </div>
-
       </div>
     </div>
   )

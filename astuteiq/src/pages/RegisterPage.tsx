@@ -1,66 +1,60 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useRegister } from '../features/auth/hooks'
-import { Eye, EyeOff, ShieldCheck, User } from 'lucide-react'
+import {
+  Eye,
+  EyeOff,
+  ShieldCheck,
+  User,
+  Lock,
+} from 'lucide-react'
 
-type Role = 'user' | 'admin'
+type Role = 'user'
 
-const ROLES: {
-  value: Role; label: string; desc: string; dest: string
-  icon: typeof User; color: string; border: string
-}[] = [
-  {
-    value:  'user',
-    label:  'Paraplanner',
-    desc:   'Run reviews & export reports',
-    dest:   'User dashboard',
-    icon:   User,
-    color:  'text-[#A78BFA]',
-    border: 'border-[#6B2FD9] bg-[#6B2FD9]/10',
-  },
-  {
-    value:  'admin',
-    label:  'Admin',
-    desc:   'Manage practice & team access',
-    dest:   'Admin dashboard',
-    icon:   ShieldCheck,
-    color:  'text-[#2DD4A0]',
-    border: 'border-[#2DD4A0] bg-[#2DD4A0]/10',
-  },
-]
+const ROLE = {
+  value: 'user' as Role,
+  label: 'Paraplanner',
+  desc: 'Run reviews & export reports',
+  dest: 'User dashboard',
+  icon: User,
+  color: 'text-[#A78BFA]',
+  border: 'border-[#6B2FD9] bg-[#6B2FD9]/10',
+}
 
 export default function RegisterPage() {
-  const [role, setRole]         = useState<Role>('user')
-  const [name, setName]         = useState('')
+  const [name, setName] = useState('')
   const [practice, setPractice] = useState('')
-  const [email, setEmail]       = useState('')
+  const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
-  const [showPw, setShowPw]     = useState(false)
+  const [showPw, setShowPw] = useState(false)
   const [strength, setStrength] = useState(0)
 
   const { register, loading } = useRegister()
 
   function checkStrength(pw: string) {
     let score = 0
-    if (pw.length >= 8)           score++
-    if (/[A-Z]/.test(pw))        score++
-    if (/[0-9]/.test(pw))        score++
+
+    if (pw.length >= 8) score++
+    if (/[A-Z]/.test(pw)) score++
+    if (/[0-9]/.test(pw)) score++
     if (/[^A-Za-z0-9]/.test(pw)) score++
+
     setStrength(score)
     setPassword(pw)
   }
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    register(name, email, password, practice, role)
+
+    // ALL public registrations are normal users/paraplanners
+    register(name, email, password, practice, 'user')
   }
 
-  const active = ROLES.find((r) => r.value === role)!
   const strengthMeta = [
-    { label: 'Weak',        color: '#FF6B6B' },
-    { label: 'Fair',        color: '#FFB347' },
-    { label: 'Good',        color: '#FFB347' },
-    { label: 'Strong',      color: '#2DD4A0' },
+    { label: 'Weak', color: '#FF6B6B' },
+    { label: 'Fair', color: '#FFB347' },
+    { label: 'Good', color: '#FFB347' },
+    { label: 'Strong', color: '#2DD4A0' },
     { label: 'Very strong', color: '#2DD4A0' },
   ][strength] ?? { label: '', color: '' }
 
@@ -69,122 +63,203 @@ export default function RegisterPage() {
       className="min-h-screen flex items-center justify-center px-4 py-12"
       style={{ background: '#0B0B14' }}
     >
-      {/* Glow */}
+      {/* Background Glow */}
       <div className="pointer-events-none fixed inset-0 overflow-hidden">
         <div
-          className="absolute -top-40 left-1/2 -translate-x-1/2 w-[600px] h-[400px] rounded-full opacity-15"
-          style={{ background: 'radial-gradient(ellipse, #6B2FD9 0%, transparent 70%)' }}
+          className="
+            absolute -top-40 left-1/2 -translate-x-1/2
+            w-[600px] h-[400px]
+            rounded-full opacity-15
+          "
+          style={{
+            background:
+              'radial-gradient(ellipse, #6B2FD9 0%, transparent 70%)',
+          }}
         />
       </div>
 
       <div className="relative z-10 w-full max-w-sm space-y-6">
-
         {/* Logo */}
         <div className="text-center space-y-1">
           <h1
             className="text-4xl font-bold text-white"
-            style={{ fontFamily: "'DM Serif Display', Georgia, serif" }}
+            style={{
+              fontFamily:
+                "'DM Serif Display', Georgia, serif",
+            }}
           >
-            Astute<span style={{ color: '#A78BFA' }}>IQ</span>
+            Astute
+            <span style={{ color: '#A78BFA' }}>
+              IQ
+            </span>
           </h1>
-          <p className="text-slate-500 text-sm">Create your account</p>
+
+          <p className="text-slate-500 text-sm">
+            Create your paraplanner account
+          </p>
         </div>
 
-        {/* Role selector */}
-        <div className="grid grid-cols-2 gap-2">
-          {ROLES.map(({ value, label, desc, dest, icon: Icon, color, border }) => (
-            <button
-              key={value}
-              type="button"
-              onClick={() => setRole(value)}
-              className={`flex flex-col items-center gap-2 p-4 rounded-2xl border-2 transition-all duration-150 ${
-                role === value
-                  ? border
-                  : 'border-slate-800 bg-[#0f0f1a] hover:border-slate-600'
-              }`}
+        {/* Access Notice */}
+        <div
+          className="
+            rounded-2xl border border-amber-500/20
+            bg-amber-500/5 p-4
+          "
+        >
+          <div className="flex items-start gap-3">
+            <div
+              className="
+                flex h-10 w-10 shrink-0 items-center
+                justify-center rounded-xl
+                bg-amber-500/10
+              "
             >
-              <div className={`p-2 rounded-xl ${role === value ? 'bg-white/10' : 'bg-slate-800'}`}>
-                <Icon size={16} className={role === value ? color : 'text-slate-500'} />
-              </div>
-              <div className="text-center">
-                <p className={`text-xs font-semibold ${role === value ? 'text-white' : 'text-slate-400'}`}>
-                  {label}
-                </p>
-                <p className="text-xs text-slate-600 mt-0.5">{desc}</p>
-                {role === value && (
-                  <p className="text-xs mt-1 font-medium" style={{ color: role === 'admin' ? '#2DD4A0' : '#A78BFA' }}>
-                    → {dest}
-                  </p>
-                )}
-              </div>
-            </button>
-          ))}
+              <Lock
+                size={18}
+                className="text-amber-400"
+              />
+            </div>
+
+            <div>
+              <p className="text-sm font-semibold text-amber-300">
+                Admin access is restricted
+              </p>
+
+              <p className="mt-1 text-xs leading-relaxed text-slate-400">
+                Only practice administrators can access the
+                Admin Dashboard. Admin accounts must be
+                invited by an existing administrator.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        {/* User Role Card */}
+        <div
+          className={`
+            flex flex-col items-center gap-2
+            rounded-2xl border-2 p-4
+            ${ROLE.border}
+          `}
+        >
+          <div className="rounded-xl bg-white/10 p-2">
+            <ROLE.icon
+              size={18}
+              className={ROLE.color}
+            />
+          </div>
+
+          <div className="text-center">
+            <p className="text-sm font-semibold text-white">
+              {ROLE.label}
+            </p>
+
+            <p className="mt-1 text-xs text-slate-400">
+              {ROLE.desc}
+            </p>
+
+            <p
+              className="mt-2 text-xs font-medium"
+              style={{ color: '#A78BFA' }}
+            >
+              → {ROLE.dest}
+            </p>
+          </div>
         </div>
 
         {/* Form */}
-        <div className="rounded-2xl border border-slate-800 bg-[#0f0f1a] p-6 space-y-4 shadow-2xl">
-          <div className="flex items-center gap-2 mb-1">
-            <active.icon size={14} className={active.color} />
+        <div
+          className="
+            rounded-2xl border border-slate-800
+            bg-[#0f0f1a] p-6
+            shadow-2xl
+          "
+        >
+          <div className="mb-5 flex items-center gap-2">
+            <User
+              size={14}
+              className="text-[#A78BFA]"
+            />
+
             <h2 className="text-sm font-semibold text-white">
-              Register as {active.label}
+              Register as Paraplanner
             </h2>
           </div>
 
-          <form onSubmit={handleSubmit} className="space-y-4">
-
+          <form
+            onSubmit={handleSubmit}
+            className="space-y-4"
+          >
             <div>
-              <label className="label">Full name</label>
+              <label className="label">
+                Full name
+              </label>
+
               <input
                 className="input"
                 placeholder="Sarah Johnson"
                 value={name}
-                onChange={(e) => setName(e.target.value)}
+                onChange={(e) =>
+                  setName(e.target.value)
+                }
                 required
                 autoFocus
               />
             </div>
-
+            
             <div>
-              <label className="label">Practice name</label>
-              <input
-                className="input"
-                placeholder="Astute Financial Planning"
-                value={practice}
-                onChange={(e) => setPractice(e.target.value)}
-                required
-              />
-            </div>
+              <label className="label">
+                Work email
+              </label>
 
-            <div>
-              <label className="label">Email</label>
               <input
                 type="email"
                 className="input"
-                placeholder={role === 'admin' ? 'admin@practice.com.au' : 'you@practice.com.au'}
+                placeholder="you@practice.com.au"
                 value={email}
-                onChange={(e) => setEmail(e.target.value)}
+                onChange={(e) =>
+                  setEmail(e.target.value)
+                }
                 required
               />
             </div>
 
             <div className="space-y-2">
-              <label className="label">Password</label>
+              <label className="label">
+                Password
+              </label>
+
               <div className="relative">
                 <input
                   type={showPw ? 'text' : 'password'}
                   className="input pr-10"
                   placeholder="Min. 8 characters"
                   value={password}
-                  onChange={(e) => checkStrength(e.target.value)}
+                  onChange={(e) =>
+                    checkStrength(e.target.value)
+                  }
                   minLength={8}
                   required
                 />
+
                 <button
                   type="button"
-                  onClick={() => setShowPw((v) => !v)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300 transition-colors"
+                  onClick={() =>
+                    setShowPw((v) => !v)
+                  }
+                  className="
+                    absolute right-3 top-1/2
+                    -translate-y-1/2
+                    text-slate-500
+                    transition-colors
+                    hover:text-slate-300
+                  "
                 >
-                  {showPw ? <EyeOff size={15} /> : <Eye size={15} />}
+                  {showPw ? (
+                    <EyeOff size={15} />
+                  ) : (
+                    <Eye size={15} />
+                  )}
                 </button>
               </div>
 
@@ -194,57 +269,86 @@ export default function RegisterPage() {
                     {[1, 2, 3, 4].map((i) => (
                       <div
                         key={i}
-                        className="flex-1 h-1 rounded-full transition-colors duration-300"
-                        style={{ background: i <= strength ? strengthMeta.color : '#1e1e30' }}
+                        className="
+                          h-1 flex-1 rounded-full
+                          transition-colors duration-300
+                        "
+                        style={{
+                          background:
+                            i <= strength
+                              ? strengthMeta.color
+                              : '#1e1e30',
+                        }}
                       />
                     ))}
                   </div>
-                  <p className="text-xs" style={{ color: strengthMeta.color }}>
+
+                  <p
+                    className="text-xs"
+                    style={{
+                      color: strengthMeta.color,
+                    }}
+                  >
                     {strengthMeta.label}
                   </p>
                 </div>
               )}
             </div>
 
-            {/* Role + destination summary */}
+            {/* Info */}
             <div
-              className="flex items-start gap-2.5 px-3 py-2.5 rounded-xl border text-xs leading-relaxed"
-              style={{
-                background:  role === 'admin' ? 'rgba(45,212,160,0.05)' : 'rgba(107,47,217,0.05)',
-                borderColor: role === 'admin' ? 'rgba(45,212,160,0.2)'  : 'rgba(107,47,217,0.2)',
-                color:       role === 'admin' ? '#2DD4A0'               : '#A78BFA',
-              }}
+              className="
+                rounded-xl border
+                border-[#6B2FD9]/20
+                bg-[#6B2FD9]/5
+                px-3 py-2.5
+                text-xs leading-relaxed
+                text-[#A78BFA]
+              "
             >
-              <active.icon size={12} className="mt-0.5 shrink-0" />
-              <span>
-                Registering as <strong>{active.label}</strong> —{' '}
-                {role === 'admin'
-                  ? 'you will be taken to the Admin dashboard.'
-                  : 'you will be taken to the User dashboard.'}
-              </span>
+              Your account will have access to the
+              paraplanner dashboard and SOA review tools.
             </div>
 
             <button
               type="submit"
               disabled={loading}
-              className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl font-semibold text-sm transition-all duration-150 disabled:opacity-50"
+              className="
+                flex w-full items-center
+                justify-center gap-2
+                rounded-xl py-2.5
+                text-sm font-semibold text-white
+                transition-all duration-150
+                disabled:opacity-50
+              "
               style={{
-                background: role === 'admin' ? '#1a4a3a' : '#6B2FD9',
-                border:     role === 'admin' ? '1px solid rgba(45,212,160,0.3)' : 'none',
-                color:      role === 'admin' ? '#2DD4A0' : 'white',
+                background: '#6B2FD9',
               }}
             >
               {loading ? (
-                <span className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin" />
+                <span
+                  className="
+                    h-4 w-4 animate-spin rounded-full
+                    border-2 border-current
+                    border-t-transparent
+                  "
+                />
               ) : (
-                `Create ${active.label} account`
+                'Create account'
               )}
             </button>
           </form>
 
-          <p className="text-center text-xs text-slate-500 pt-1">
+          <p className="pt-4 text-center text-xs text-slate-500">
             Already have an account?{' '}
-            <Link to="/login" className="text-[#A78BFA] hover:text-[#c4b5fd] transition-colors">
+            <Link
+              to="/login"
+              className="
+                text-[#A78BFA]
+                transition-colors
+                hover:text-[#c4b5fd]
+              "
+            >
               Sign in
             </Link>
           </p>
