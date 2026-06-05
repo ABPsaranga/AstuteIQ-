@@ -56,7 +56,7 @@
 4. **Update API URL**
    - In `astuteiq/.env.production`, update `VITE_API_URL` to your Railway backend URL:
      ```
-     VITE_API_URL=https://your-project-name.up.railway.app
+     VITE_API_URL=https://vercel.com/astuteiq/astute-iq-nsjv/694qcpVVQ5Tq1oTdB9peHvAcPf2S
      ```
 
 ### 3. Update CORS (Backend)

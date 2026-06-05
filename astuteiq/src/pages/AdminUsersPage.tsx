@@ -30,7 +30,7 @@ export default function AdminUsersPage() {
     try {
       setLoading(true)
 
-      const res = await api.get('/users')
+      const res = await api.get('/admin/users')
 
       setUsers(res.data)
     } catch (err) {
@@ -54,7 +54,8 @@ export default function AdminUsersPage() {
     try {
       const updatedRole = user.role === 'admin' ? 'user' : 'admin'
 
-      await api.patch(`/users/${user.id}/role`, {
+      await api.patch('/admin/users/role', {
+        user_id: user.id,
         role: updatedRole,
       })
 
@@ -102,7 +103,7 @@ export default function AdminUsersPage() {
     if (!confirmed) return
 
     try {
-      await api.delete(`/users/${user.id}`)
+      await api.delete(`/admin/users/${user.id}`)
 
       setUsers((prev) =>
         prev.filter((u) => u.id !== user.id)

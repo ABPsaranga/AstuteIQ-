@@ -12,6 +12,7 @@ export interface AuthUser {
 }
 
 interface AuthState {
+  toggleRole: any
   user: AuthUser | null
   token: string | null
   isReady: boolean
@@ -27,6 +28,14 @@ export const useAuthStore = create<AuthState>()(
       user: null,
       token: null,
       isReady: false,
+
+      // toggleRole flips between 'admin' and 'user' when a user exists
+      toggleRole: () =>
+        set((state) => {
+          if (!state.user) return {}
+          const newRole: UserRole = state.user.role === 'admin' ? 'user' : 'admin'
+          return { user: { ...state.user, role: newRole } }
+        }),
 
       setAuth: (user, token) =>
         set({

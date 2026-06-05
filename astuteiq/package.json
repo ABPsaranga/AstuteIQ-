@@ -26,6 +26,7 @@
   "license": "ISC",
   "dependencies": {
     "@supabase/supabase-js": "^2.105.3",
+    "@tanstack/react-query": "^5.101.0",
     "axios": "^1.16.0",
     "date-fns": "^4.1.0",
     "docx": "^9.6.1",

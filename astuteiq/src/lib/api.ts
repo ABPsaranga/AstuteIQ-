@@ -10,7 +10,7 @@ import supabase from './supabase'
 const API_BASE =
   import.meta.env.VITE_API_BASE_URL ??
   import.meta.env.VITE_API_URL ??
-  'http://127.0.0.1:8001'
+  'http://127.0.0.1:8000'
 
 /* ============================================================================
    AXIOS INSTANCE
@@ -55,35 +55,44 @@ apiClient.interceptors.request.use(
    RESPONSE INTERCEPTOR
 ============================================================================ */
 
-apiClient.interceptors.response.use(
-  (response) => response,
+apiClient.interceptors.request.use(
+  async (config) => {
+    try {
+      let token =
+        localStorage.getItem('token')
 
-  async (error) => {
-    const status = error.response?.status
+      if (!token) {
+        const { data } =
+          await supabase.auth.getSession()
 
-    // Unauthorized
-    if (status === 401) {
-      try {
-        await supabase.auth.signOut()
-      } catch {
-        //
+        token =
+          data.session?.access_token ??
+          null
       }
 
-      window.location.href = '/login'
+      if (token) {
+        config.headers.Authorization =
+          `Bearer ${token}`
+
+        console.log(
+          'AUTH HEADER ATTACHED'
+        )
+      } else {
+        console.warn(
+          'NO TOKEN FOUND'
+        )
+      }
+    } catch (err) {
+      console.error(
+        'Auth interceptor error:',
+        err
+      )
     }
 
-    // Timeout
-    if (error.code === 'ECONNABORTED') {
-      console.error('Request timeout')
-    }
-
-    // Server unavailable
-    if (!error.response) {
-      console.error('Backend unreachable')
-    }
-
-    return Promise.reject(error)
-  }
+    return config
+  },
+  (error) =>
+    Promise.reject(error)
 )
 
 export default apiClient
