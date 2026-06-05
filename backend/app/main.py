@@ -48,7 +48,7 @@ origins = [
 
     # Vercel deployments
     "https://astute-iq-nsjv.vercel.app",
-    "https://astute-iq-nsjv-oh0y0v37f-astuteiq.vercel.app",
+    "https://astute-iq-nsjv-cbl961lm7-astuteiq.vercel.app",
 
     # Custom domains
     "https://astuteiq.io",
