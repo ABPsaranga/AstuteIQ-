@@ -47,6 +47,7 @@ origins = [
     "http://localhost:3000",
 
     # Vercel deployments
+    "https://astuteiq.vercel.app",
     "https://astute-iq-nsjv.vercel.app",
     "https://astute-iq-nsjv-cbl961lm7-astuteiq.vercel.app",
 
