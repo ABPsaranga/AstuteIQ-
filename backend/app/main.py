@@ -52,7 +52,7 @@ origins = [
     "https://astute-iq-nsjv-4nplg0hlp-astuteiq.vercel.app",
     "https://astuteiq-oh8d9qf5n-astuteiq.vercel.app",
     "https://vercel.com/astuteiq/astuteiq/6PqytTQqmL8WXXz2TzmJaWBfCuuN",
-    "https://astuteiq-320n7v6it-astuteiq.vercel.app"
+    "https://astuteiq-bd54uetp2-astuteiq.vercel.app/", # newly added on 2024-06-17
 
     # Custom domains
     "https://astuteiq.io",
