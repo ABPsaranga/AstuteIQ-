@@ -1,10 +1,11 @@
-import time
-import psutil
 from fastapi import APIRouter, Depends, HTTPException
-from app.core.deps import get_current_user
+from app.core.deps import get_current_user, is_admin
 from app.core.config import settings
 from pydantic import BaseModel, EmailStr
 from supabase import create_client
+import time
+import psutil
+
 
 START_TIME = time.time()
 
@@ -30,14 +31,11 @@ async def invite_user(
     payload: InvitePayload,
     user: dict = Depends(get_current_user),
 ):
-    if user.get("role") != "admin":
-        raise HTTPException(status_code=403, detail="Admin access required.")
-
-    if payload.role not in ("user", "paraplanner", "admin"):
-        raise HTTPException(status_code=422, detail="Role must be 'user', 'paraplanner' or 'admin'.")
-
-    if not settings.SUPABASE_URL or not settings.SUPABASE_SERVICE_ROLE_KEY:
-        raise HTTPException(status_code=500, detail="Supabase not configured.")
+    if not is_admin(user):
+        raise HTTPException(
+            status_code=403,
+            detail="Admin access required."
+        )
 
     admin_client = create_client(
         settings.SUPABASE_URL,
@@ -45,31 +43,51 @@ async def invite_user(
     )
 
     response = admin_client.auth.admin.invite_user_by_email(
-        payload.email,
-        options={"data": {"role": payload.role}},
+        payload.email
     )
 
     return {
         "message": f"Invite sent to {payload.email}",
         "user_id": str(response.user.id),
     }
-
-
 # ─── USERS ───────────────────────────────────────────────────────────────────
 
+
 @router.get("/users")
-async def list_users(user: dict = Depends(get_current_user)):
-    if user.get("role") != "admin":
-        raise HTTPException(status_code=403, detail="Admin access required.")
+async def list_users(
+    user: dict = Depends(get_current_user)
+):
+    if not is_admin(user):
+        raise HTTPException(
+            status_code=403,
+            detail="Admin access required."
+        )
 
     admin_client = create_client(
         settings.SUPABASE_URL,
         settings.SUPABASE_SERVICE_ROLE_KEY,
     )
 
-    users = admin_client.auth.admin.list_users()
-    return {"users": users}
+    response = admin_client.auth.admin.list_users()
 
+    users = []
+
+    for u in response:
+        users.append({
+            "id": str(u.id),
+            "email": u.email,
+            "full_name": (
+                u.user_metadata.get("full_name")
+                if u.user_metadata
+                else ""
+            ),
+            "role": "user",
+            "reviews_count": 0,
+            "created_at": str(u.created_at),
+            "active": True,
+        })
+
+    return users
 
 @router.delete("/users/{user_id}")
 async def delete_user(
@@ -89,6 +107,14 @@ async def delete_user(
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to delete user: {str(e)}")
+    
+def get_user_role(user: dict) -> str:
+    return (
+        user.get("user_metadata", {}).get("role")
+        or user.get("app_metadata", {}).get("role")
+        or user.get("role")
+        or "user"
+    )
 
 
 # ─── STATS ───────────────────────────────────────────────────────────────────
