@@ -49,7 +49,7 @@ origins = [
     # Vercel deployments
     "https://astuteiq.vercel.app",
     "https://astute-iq-nsjv.vercel.app",
-    "https://astute-iq-nsjv-cbl961lm7-astuteiq.vercel.app",
+    "https://astute-iq-nsjv-4nplg0hlp-astuteiq.vercel.app",
 
     # Custom domains
     "https://astuteiq.io",
@@ -70,7 +70,6 @@ app.add_middleware(
 
     # Allow every header
     allow_headers=["*"],
-
     expose_headers=["*"],
 )
 
