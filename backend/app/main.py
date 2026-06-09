@@ -50,6 +50,7 @@ origins = [
     "https://astuteiq.vercel.app",
     "https://astute-iq-nsjv.vercel.app",
     "https://astute-iq-nsjv-4nplg0hlp-astuteiq.vercel.app",
+    "https://astuteiq-oh8d9qf5n-astuteiq.vercel.app",
 
     # Custom domains
     "https://astuteiq.io",
