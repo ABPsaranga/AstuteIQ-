@@ -51,6 +51,7 @@ origins = [
     "https://astute-iq-nsjv.vercel.app",
     "https://astute-iq-nsjv-4nplg0hlp-astuteiq.vercel.app",
     "https://astuteiq-oh8d9qf5n-astuteiq.vercel.app",
+    "https://vercel.com/astuteiq/astuteiq/6PqytTQqmL8WXXz2TzmJaWBfCuuN"
 
     # Custom domains
     "https://astuteiq.io",
@@ -139,4 +140,8 @@ def health():
         "supabase_service_role_configured": bool(
             os.getenv("SUPABASE_SERVICE_ROLE_KEY")
         ),
+        "supabase_anon_key_configured": bool(
+            os.getenv("SUPABASE_ANON_KEY")
+        ),
+
     }
