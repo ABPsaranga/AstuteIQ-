@@ -247,4 +247,4 @@ AstuteIQ reviews SOAs against:
 
 ## License
 
-Private and confidential. All rights reserved — AstuteIQ © 2025.
+Private and confidential. All rights reserved — AstuteIQ © 2026.
