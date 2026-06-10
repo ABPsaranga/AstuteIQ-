@@ -16,8 +16,8 @@ supabase = create_client(settings.SUPABASE_URL, settings.SUPABASE_ANON_KEY)
 # ─── MODELS ──────────────────────────────────────────────────────────────────
 
 class InvitePayload(BaseModel):
-    email: EmailStr
-    role: str = "user"
+    user_email: EmailStr
+    user_role: str = "user"
 
 class InvitationSendPayload(BaseModel):
     email: EmailStr
@@ -43,11 +43,16 @@ async def invite_user(
     )
 
     response = admin_client.auth.admin.invite_user_by_email(
-        payload.email
+        payload.user_email,
+        options={
+            "data": {
+                "role": payload.user_role
+            }
+        },
     )
 
     return {
-        "message": f"Invite sent to {payload.email}",
+        "message": f"Invite sent to {payload.user_email}",
         "user_id": str(response.user.id),
     }
 # ─── USERS ───────────────────────────────────────────────────────────────────

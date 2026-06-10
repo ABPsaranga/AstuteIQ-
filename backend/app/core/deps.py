@@ -13,6 +13,16 @@ async def get_current_user(
             options={"verify_signature": False}
         )
 
+        # Supabase stores the role in app_metadata — surface it at top level
+        # so all route guards can simply do user.get("role")
+        role = (
+            payload.get("app_metadata", {}).get("role")
+            or payload.get("user_metadata", {}).get("role")
+            or payload.get("role")
+            or "user"
+        )
+        payload["role"] = role
+
         return payload
 
     except Exception as e:
@@ -23,12 +33,4 @@ async def get_current_user(
 
 
 def is_admin(user: dict) -> bool:
-    admin_emails = {
-        "rasindu@astutebusinesspartners.com.au",
-        "admin@astutebusinesspartners.com.au",
-    }
-
-    return (
-        user.get("email", "").lower()
-        in admin_emails
-    )
+    return user.get("role") == "admin"

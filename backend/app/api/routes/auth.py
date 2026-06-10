@@ -16,8 +16,8 @@ router = APIRouter()
 # ── Schemas ───────────────────────────────────────────────────────────────────
 
 class InvitePayload(BaseModel):
-    email: EmailStr
-    role:  str = "user"   # "user" | "admin"
+    user_email: EmailStr
+    user_role: str = "user"   # "user" | "admin"
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
@@ -35,7 +35,9 @@ async def invite_user(
     if user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="Admin access required.")
 
-    if payload.role not in ("user", "admin"):
+    if payload.user_role not in (
+        "user", "admin"
+        ):
         raise HTTPException(status_code=422, detail="Role must be 'user' or 'admin'.")
 
     if not settings.SUPABASE_URL or not settings.SUPABASE_SERVICE_ROLE_KEY:
@@ -55,12 +57,17 @@ async def invite_user(
         )
 
         response = admin_client.auth.admin.invite_user_by_email(
-            payload.email,
-            options={"data": {"role": payload.role}},
+            payload.user_email,
+            options={"data": 
+                    {
+                        "role": payload.user_role
+                        }
+                    },
+
         )
 
         return {
-            "message": f"Invite sent to {payload.email}",
+            "message": f"Invite sent to {payload.user_email}",
             "user_id": str(response.user.id),
         }
 
@@ -72,4 +79,6 @@ async def invite_user(
 @router.get("/auth/me")
 async def me(user: dict = Depends(get_current_user)):
     """Return the current user's JWT claims."""
+    # In a real app, you'd probably want to fetch additional profile info from your DB here
+
     return user

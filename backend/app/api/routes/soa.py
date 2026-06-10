@@ -8,8 +8,7 @@ import json
 import asyncio
 import random
 from typing import Any, cast
-
-from fastapi import APIRouter
+from fastapi import APIRouter, Response
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 

@@ -18,6 +18,7 @@ from app.api.routes import (
     soa,
     feedback,
     admin,          # ← IMPORTANT
+    billing, 
 )
 
 # ──────────────────────────────────────────────────────────────
@@ -75,12 +76,29 @@ app.add_middleware(
     allow_credentials=True,
 
     # Allow every method
-    allow_methods=["*"],
+    allow_methods=[
+        "GET",
+        "POST",
+        "PUT",
+        "PATCH",
+        "DELETE",
+        "OPTIONS",
+    ],
 
     # Allow every header
     allow_headers=["*"],
     expose_headers=["*"],
 )
+
+# ──────────────────────────────────────────────────────────────
+# Global OPTIONS preflight handler
+# ──────────────────────────────────────────────────────────────
+
+from fastapi.responses import JSONResponse
+
+@app.options("/{rest_of_path:path}")
+async def preflight_handler(rest_of_path: str):
+    return JSONResponse(content={}, status_code=200)
 
 # ──────────────────────────────────────────────────────────────
 # API Routes
@@ -114,6 +132,12 @@ app.include_router(
     admin.router,
     prefix="/api",      # admin router already has prefix="/admin"
     tags=["Admin"],
+)
+
+app.include_router(
+    billing.router,
+    prefix="/api",
+    tags=["Billing"],
 )
 
 # Final route becomes:
