@@ -1731,7 +1731,7 @@ export default function SOAAnalysisPage() {
       const { data: sessionData } = await supabase.auth.getSession()
       const token      = sessionData.session?.access_token ?? ''
       const useBackend = true
-      const BASE_URL   = import.meta.env.VITE_API_BASE_URL ?? import.meta.env.VITE_API_URL ?? 'http://127.0.0.1:8000'
+      const BASE_URL = import.meta.env.VITE_API_URL ?? 'http://127.0.0.1:8000'
 
       setStreamText(`${reviewMode === 'quick' ? 'Quick Check' : 'Full Review'} — Stage 1${totalStages > 1 ? ' of 2' : ''}: Analysing documents…\n`)
       setStep(3)

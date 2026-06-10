@@ -21,17 +21,26 @@ export default function InviteUserModal({ onClose }: Props) {
 
     try {
       // Real backend call — service-role key stays server-side in auth.py
-      await apiClient.post('/auth/invite', { email: email.trim(), role })
+      await apiClient.post('/auth/invite', 
+        {
+           user_email: email.trim(), 
+           user_role: role 
+        }
+      )
       toast.success(`Invite sent to ${email.trim()}`)
       onClose()
     } catch (err: any) {
-      // FastAPI surfaces errors in err.response.data.detail
-      const message =
-        err?.response?.data?.detail ??
-        err?.message ??
-        'Failed to send invite — try again.'
-      setError(message)
-    } finally {
+        console.error('Invite Error:', err.response?.data)
+
+        setError(
+          JSON.stringify(
+            err.response?.data ?? err.message,
+            null,
+            2
+          )
+        )
+      }
+    finally {
       setLoading(false)
     }
   }
