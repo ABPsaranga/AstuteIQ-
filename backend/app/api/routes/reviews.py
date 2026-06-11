@@ -80,19 +80,19 @@ async def run_review(body: RunReviewPayload, user: dict = Depends(get_current_us
 
     print(f"[reviews/run] Starting review for file: {file_data['filename']}, mode: {body.mode}")
     print(f"[reviews/run] Calling SOA with {len(documents)} documents")
-    
+
     # Run the actual AI review
     result = await soa_run_review(payload)
-    
+
     print(f"[reviews/run] SOA result received: {type(result)}, keys: {list(result.keys()) if isinstance(result, dict) else 'not dict'}")
-    
+
     # Check for SOA errors
     if "error" in result:
         print(f"[reviews/run] SOA error: {result['error']}")
         raise HTTPException(status_code=500, detail=f"AI review failed: {result['error']}")
 
     print(f"[reviews/run] Processing {len(result.get('checks', []))} checks")
-    
+
     # Convert SOA result to review format
     review_data = {
         "id": f"rev_{uuid.uuid4().hex[:12]}",
@@ -149,7 +149,7 @@ def review_history(page: int = 1, limit: int = 20, user: dict = Depends(get_curr
         try:
             offset = (page - 1) * limit
             response = supabase.table("reviews").select("*").eq("userId", user_id).order("createdAt", desc=True).range(offset, offset + limit - 1).execute()
-            
+
             # Get total count
             total_response = supabase.table("reviews").select("*").eq("userId", user_id).execute()
             total = len(total_response.data or [])
@@ -192,7 +192,7 @@ def get_analytics(user: dict = Depends(get_current_user)):
 
                 avg_score = round(sum(scores) / len(scores)) if scores else 0
                 month_prefix = datetime.utcnow().strftime("%Y-%m")
-                
+
                 # Count this month reviews with proper type checking
                 this_month = 0
                 for r in reviews:
@@ -231,74 +231,10 @@ def get_analytics(user: dict = Depends(get_current_user)):
         "monthly_data": [], "category_data": [], "pie_data": []
     }
 
-@router.get("/{review_id}")
-def get_review(review_id: str, user: dict = Depends(get_current_user)):
-    user_id = user.get("sub") or user.get("id") or "unknown"
 
-    supabase = get_supabase()
-    if supabase:
-        try:
-            response = supabase.table("reviews").select("*").eq("id", review_id).eq("userId", user_id).execute()
-            if response.data:
-                return response.data[0]
-        except Exception as e:
-            print(f"Failed to fetch review from Supabase: {e}")
-
-    # Fallback - return not found
-    raise HTTPException(status_code=404, detail="Review not found")
-
-@router.post("/{review_id}/override")
-def submit_override(review_id: str, body: OverridePayload, user: dict = Depends(get_current_user)):
-    user_id = user.get("sub") or user.get("id") or "unknown"
-
-    supabase = get_supabase()
-    if supabase:
-        try:
-            # Get current review
-            response = supabase.table("reviews").select("overrides, findings").eq("id", review_id).eq("userId", user_id).execute()
-            if response.data:
-                review_data = response.data[0]
-                if not isinstance(review_data, dict):
-                    raise HTTPException(status_code=500, detail="Invalid review data format")
-                current_overrides = review_data.get("overrides", [])
-                findings = review_data.get("findings", [])
-                
-                # Ensure overrides and findings are lists
-                if not isinstance(current_overrides, list):
-                    current_overrides = []
-                if not isinstance(findings, list):
-                    findings = []
-
-                # Find the original status
-                original_status = None
-                for finding in findings:
-                    if isinstance(finding, dict) and finding.get("checkId") == body.checkId:
-                        original_status = finding.get("status")
-                        break
-
-                if original_status is None:
-                    raise HTTPException(status_code=404, detail="Finding not found")
-
-                # Add new override
-                new_override = {
-                    "checkId": body.checkId,
-                    "originalStatus": original_status,
-                    "newStatus": body.newStatus,
-                    "comment": body.comment,
-                    "overriddenBy": user_id,
-                    "overriddenAt": datetime.utcnow().isoformat()
-                }
-                current_overrides.append(new_override)
-
-                # Update review
-                supabase.table("reviews").update({"overrides": current_overrides}).eq("id", review_id).execute()
-
-                return {"message": "Override saved."}
-        except Exception as e:
-            print(f"Failed to save override to Supabase: {e}")
-
-    # Fallback
-    return {"message": "Override saved (locally only)."}
+# ─── STATS ────────────────────────────────────────────────────────────────
+# IMPORTANT: this must be defined BEFORE /{review_id}, otherwise FastAPI
+# matches "/stats" as a review_id and returns 404 "Review not found".
 
 @router.get("/stats")
 def review_stats(user: dict = Depends(get_current_user)):
@@ -373,3 +309,77 @@ def review_stats(user: dict = Depends(get_current_user)):
         "thisWeek": 0,
         "overrides": 0,
     }
+
+
+# ─── REVIEW BY ID ───────────────────────────────────────────────────────────
+# These parameterised routes MUST come after all literal routes above
+# (e.g. /history, /analytics, /stats) or they'll shadow them.
+
+@router.get("/{review_id}")
+def get_review(review_id: str, user: dict = Depends(get_current_user)):
+    user_id = user.get("sub") or user.get("id") or "unknown"
+
+    supabase = get_supabase()
+    if supabase:
+        try:
+            response = supabase.table("reviews").select("*").eq("id", review_id).eq("userId", user_id).execute()
+            if response.data:
+                return response.data[0]
+        except Exception as e:
+            print(f"Failed to fetch review from Supabase: {e}")
+
+    # Fallback - return not found
+    raise HTTPException(status_code=404, detail="Review not found")
+
+@router.post("/{review_id}/override")
+def submit_override(review_id: str, body: OverridePayload, user: dict = Depends(get_current_user)):
+    user_id = user.get("sub") or user.get("id") or "unknown"
+
+    supabase = get_supabase()
+    if supabase:
+        try:
+            # Get current review
+            response = supabase.table("reviews").select("overrides, findings").eq("id", review_id).eq("userId", user_id).execute()
+            if response.data:
+                review_data = response.data[0]
+                if not isinstance(review_data, dict):
+                    raise HTTPException(status_code=500, detail="Invalid review data format")
+                current_overrides = review_data.get("overrides", [])
+                findings = review_data.get("findings", [])
+
+                # Ensure overrides and findings are lists
+                if not isinstance(current_overrides, list):
+                    current_overrides = []
+                if not isinstance(findings, list):
+                    findings = []
+
+                # Find the original status
+                original_status = None
+                for finding in findings:
+                    if isinstance(finding, dict) and finding.get("checkId") == body.checkId:
+                        original_status = finding.get("status")
+                        break
+
+                if original_status is None:
+                    raise HTTPException(status_code=404, detail="Finding not found")
+
+                # Add new override
+                new_override = {
+                    "checkId": body.checkId,
+                    "originalStatus": original_status,
+                    "newStatus": body.newStatus,
+                    "comment": body.comment,
+                    "overriddenBy": user_id,
+                    "overriddenAt": datetime.utcnow().isoformat()
+                }
+                current_overrides.append(new_override)
+
+                # Update review
+                supabase.table("reviews").update({"overrides": current_overrides}).eq("id", review_id).execute()
+
+                return {"message": "Override saved."}
+        except Exception as e:
+            print(f"Failed to save override to Supabase: {e}")
+
+    # Fallback
+    return {"message": "Override saved (locally only)."}

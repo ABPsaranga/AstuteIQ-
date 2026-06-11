@@ -37,24 +37,33 @@ async def invite_user(
             detail="Admin access required."
         )
 
-    admin_client = create_client(
-        settings.SUPABASE_URL,
-        settings.SUPABASE_SERVICE_ROLE_KEY,
-    )
+    try:
+        admin_client = create_client(
+            settings.SUPABASE_URL,
+            settings.SUPABASE_SERVICE_ROLE_KEY,
+        )
 
-    response = admin_client.auth.admin.invite_user_by_email(
-        payload.user_email,
-        options={
-            "data": {
-                "role": payload.user_role
-            }
-        },
-    )
+        response = admin_client.auth.admin.invite_user_by_email(
+            payload.user_email,
+            options={
+                "data": {
+                    "role": payload.user_role
+                }
+            },
+        )
 
-    return {
-        "message": f"Invite sent to {payload.user_email}",
-        "user_id": str(response.user.id),
-    }
+        return {
+            "message": f"Invite sent to {payload.user_email}",
+            "user_id": str(response.user.id),
+        }
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to send invite: {str(e)}"
+        )
+
+
 # ─── USERS ───────────────────────────────────────────────────────────────────
 
 
@@ -68,31 +77,39 @@ async def list_users(
             detail="Admin access required."
         )
 
-    admin_client = create_client(
-        settings.SUPABASE_URL,
-        settings.SUPABASE_SERVICE_ROLE_KEY,
-    )
+    try:
+        admin_client = create_client(
+            settings.SUPABASE_URL,
+            settings.SUPABASE_SERVICE_ROLE_KEY,
+        )
 
-    response = admin_client.auth.admin.list_users()
+        response = admin_client.auth.admin.list_users()
 
-    users = []
+        users = []
 
-    for u in response:
-        users.append({
-            "id": str(u.id),
-            "email": u.email,
-            "full_name": (
-                u.user_metadata.get("full_name")
-                if u.user_metadata
-                else ""
-            ),
-            "role": "user",
-            "reviews_count": 0,
-            "created_at": str(u.created_at),
-            "active": True,
-        })
+        for u in response:
+            users.append({
+                "id": str(u.id),
+                "email": u.email,
+                "full_name": (
+                    u.user_metadata.get("full_name")
+                    if u.user_metadata
+                    else ""
+                ),
+                "role": "user",
+                "reviews_count": 0,
+                "created_at": str(u.created_at),
+                "active": True,
+            })
 
-    return users
+        return users
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to list users: {str(e)}"
+        )
+
 
 @router.delete("/users/{user_id}")
 async def delete_user(
@@ -112,7 +129,8 @@ async def delete_user(
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to delete user: {str(e)}")
-    
+
+
 def get_user_role(user: dict) -> str:
     return (
         user.get("user_metadata", {}).get("role")
@@ -123,6 +141,7 @@ def get_user_role(user: dict) -> str:
 
 
 # ─── STATS ───────────────────────────────────────────────────────────────────
+
 
 @router.get("/stats")
 async def get_stats(user: dict = Depends(get_current_user)):
@@ -190,7 +209,7 @@ async def update_permissions(
 # ─── INVITATIONS ─────────────────────────────────────────────────────────────
 
 @router.get("/invitations")
-async def list_invitations(user: dict = Depends(get_current_user)):  # FIX: added missing user param
+async def list_invitations(user: dict = Depends(get_current_user)):
     if user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="Admin access required.")
 
@@ -259,30 +278,34 @@ async def get_live_monitoring(user: dict = Depends(get_current_user)):
     if user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="Admin access required.")
 
-    uptime_seconds = int(time.time() - START_TIME)
-    hours, remainder = divmod(uptime_seconds, 3600)
-    minutes, seconds = divmod(remainder, 60)
-
-    cpu = psutil.cpu_percent(interval=0.1)
-    mem = psutil.virtual_memory().percent
-
     try:
-        admin_client = create_client(
-            settings.SUPABASE_URL,
-            settings.SUPABASE_SERVICE_ROLE_KEY,
-        )
-        users        = admin_client.auth.admin.list_users()
-        active_users = len(users) if users else 0
-    except Exception:
-        active_users = 0
+        uptime_seconds = int(time.time() - START_TIME)
+        hours, remainder = divmod(uptime_seconds, 3600)
+        minutes, seconds = divmod(remainder, 60)
 
-    return {
-        "status":         "healthy",
-        "system_health":  "healthy",
-        "serverStatus":   "online",
-        "active_users":   active_users,
-        "active_reviews": 0,
-        "cpuUsage":       round(cpu, 1),
-        "memoryUsage":    round(mem, 1),
-        "uptime":         f"{hours}h {minutes}m {seconds}s",
-    }
+        cpu = psutil.cpu_percent(interval=0.1)
+        mem = psutil.virtual_memory().percent
+
+        try:
+            admin_client = create_client(
+                settings.SUPABASE_URL,
+                settings.SUPABASE_SERVICE_ROLE_KEY,
+            )
+            users        = admin_client.auth.admin.list_users()
+            active_users = len(users) if users else 0
+        except Exception:
+            active_users = 0
+
+        return {
+            "status":         "healthy",
+            "system_health":  "healthy",
+            "serverStatus":   "online",
+            "active_users":   active_users,
+            "active_reviews": 0,
+            "cpuUsage":       round(cpu, 1),
+            "memoryUsage":    round(mem, 1),
+            "uptime":         f"{hours}h {minutes}m {seconds}s",
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch monitoring data: {str(e)}")
