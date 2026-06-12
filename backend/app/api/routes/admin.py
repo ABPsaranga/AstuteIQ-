@@ -271,6 +271,38 @@ async def send_invitation(
         raise HTTPException(status_code=500, detail=f"Failed to send invitation: {str(e)}")
 
 
+# ─── AUDIT LOGS ──────────────────────────────────────────────────────────────
+
+@router.get("/audit-logs")
+async def list_audit_logs(user: dict = Depends(get_current_user)):
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required.")
+
+    try:
+        admin_client = create_client(
+            settings.SUPABASE_URL,
+            settings.SUPABASE_SERVICE_ROLE_KEY,
+        )
+
+        # Expects an "audit_logs" table with columns:
+        # id, user_email, action, details, created_at
+        response = (
+            admin_client.table("audit_logs")
+            .select("*")
+            .order("created_at", desc=True)
+            .limit(100)
+            .execute()
+        )
+
+        return {"logs": response.data or []}
+
+    except Exception as e:
+        # Table may not exist yet — return an empty list rather than a 500
+        # so the frontend renders "No audit logs available" gracefully.
+        print(f"[audit-logs] falling back to empty list: {e}")
+        return {"logs": []}
+
+
 # ─── LIVE MONITORING ─────────────────────────────────────────────────────────
 
 @router.get("/live-monitoring")
