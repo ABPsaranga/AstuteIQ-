@@ -12,7 +12,6 @@ import InviteUserModal from '../components/InviteUserModal'
 import RoleGuard from '../components/RoleGuard'
 
 import api from '../lib/api'
-import supabase from '../lib/supabase'
 
 interface UserItem {
   id: string
@@ -22,6 +21,30 @@ interface UserItem {
   reviews_count: number
   created_at: string
   active: boolean
+}
+
+// Raw shape coming back from the API — fields may be missing/null
+// for users who haven't completed profile setup (e.g. pending invites).
+interface RawUserItem {
+  id: string
+  full_name?: string | null
+  email?: string | null
+  role?: string | null
+  reviews_count?: number | null
+  created_at?: string | null
+  active?: boolean | null
+}
+
+function normalizeUser(raw: RawUserItem): UserItem {
+  return {
+    id: raw.id,
+    full_name: raw.full_name?.trim() || raw.email || 'Unnamed user',
+    email: raw.email ?? '—',
+    role: raw.role === 'admin' ? 'admin' : 'user',
+    reviews_count: raw.reviews_count ?? 0,
+    created_at: raw.created_at ?? new Date().toISOString(),
+    active: raw.active ?? true,
+  }
 }
 
 export default function AdminUsersPage() {
@@ -38,48 +61,22 @@ export default function AdminUsersPage() {
     try {
       setLoading(true)
 
-      // DEBUGGING
-      const localToken = localStorage.getItem('token')
-
-      const {
-        data: { session },
-      } = await supabase.auth.getSession()
-
-      console.group('ADMIN USERS DEBUG')
-      console.log('Local Token:', localToken)
-      console.log(
-        'Supabase Session:',
-        session ? 'EXISTS' : 'MISSING'
-      )
-      console.log(
-        'Supabase Access Token:',
-        session?.access_token
-      )
-      console.groupEnd()
-
       const res = await api.get('/admin/users')
 
-      console.log('Users Response:', res.data)
+      const raw: RawUserItem[] = Array.isArray(res.data)
+        ? res.data
+        : res.data?.users ?? []
 
-      setUsers(res.data)
+      setUsers(raw.map(normalizeUser))
     } catch (err: any) {
       console.error('Admin Users Error:', err)
 
       if (err.response) {
-        console.error(
-          'Status:',
-          err.response.status
-        )
-
-        console.error(
-          'Response:',
-          err.response.data
-        )
+        console.error('Status:', err.response.status)
+        console.error('Response:', err.response.data)
 
         if (err.response.status === 401) {
-          toast.error(
-            'Unauthorized. Please login again.'
-          )
+          toast.error('Unauthorized. Please login again.')
         } else {
           toast.error('Failed to load users')
         }
@@ -92,22 +89,20 @@ export default function AdminUsersPage() {
   }
 
   const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase()
+
+    if (!q) return users
+
     return users.filter(
       (u) =>
-        search.trim() === '' ||
-        u.full_name
-          .toLowerCase()
-          .includes(search.toLowerCase()) ||
-        u.email
-          .toLowerCase()
-          .includes(search.toLowerCase())
+        u.full_name.toLowerCase().includes(q) ||
+        u.email.toLowerCase().includes(q)
     )
   }, [users, search])
 
   async function toggleRole(user: UserItem) {
     try {
-      const updatedRole =
-        user.role === 'admin' ? 'user' : 'admin'
+      const updatedRole = user.role === 'admin' ? 'user' : 'admin'
 
       await api.patch('/admin/users/role', {
         user_id: user.id,
@@ -116,9 +111,7 @@ export default function AdminUsersPage() {
 
       setUsers((prev) =>
         prev.map((u) =>
-          u.id === user.id
-            ? { ...u, role: updatedRole }
-            : u
+          u.id === user.id ? { ...u, role: updatedRole } : u
         )
       )
 
@@ -137,9 +130,7 @@ export default function AdminUsersPage() {
 
       setUsers((prev) =>
         prev.map((u) =>
-          u.id === user.id
-            ? { ...u, active: !u.active }
-            : u
+          u.id === user.id ? { ...u, active: !u.active } : u
         )
       )
 
@@ -151,18 +142,14 @@ export default function AdminUsersPage() {
   }
 
   async function removeUser(user: UserItem) {
-    const confirmed = window.confirm(
-      `Remove ${user.full_name}?`
-    )
+    const confirmed = window.confirm(`Remove ${user.full_name}?`)
 
     if (!confirmed) return
 
     try {
       await api.delete(`/admin/users/${user.id}`)
 
-      setUsers((prev) =>
-        prev.filter((u) => u.id !== user.id)
-      )
+      setUsers((prev) => prev.filter((u) => u.id !== user.id))
 
       toast.success('User removed')
     } catch (err) {
@@ -177,15 +164,10 @@ export default function AdminUsersPage() {
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
             <h1 className="page-header">Users</h1>
-            <p className="page-sub">
-              Manage accounts and permissions.
-            </p>
+            <p className="page-sub">Manage accounts and permissions.</p>
           </div>
 
-          <button
-            onClick={() => setShowInvite(true)}
-            className="btn-primary"
-          >
+          <button onClick={() => setShowInvite(true)} className="btn-primary">
             <UserPlus size={14} />
             Invite User
           </button>
@@ -201,9 +183,7 @@ export default function AdminUsersPage() {
             className="input h-9 pl-9 text-sm"
             placeholder="Search users..."
             value={search}
-            onChange={(e) =>
-              setSearch(e.target.value)
-            }
+            onChange={(e) => setSearch(e.target.value)}
           />
         </div>
 
@@ -211,21 +191,11 @@ export default function AdminUsersPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-slate-800 bg-slate-900/30 text-xs uppercase tracking-wide text-slate-500">
-                <th className="px-5 py-3 text-left">
-                  User
-                </th>
-                <th className="px-5 py-3 text-left">
-                  Role
-                </th>
-                <th className="px-5 py-3 text-left">
-                  Reviews
-                </th>
-                <th className="px-5 py-3 text-left">
-                  Joined
-                </th>
-                <th className="px-5 py-3 text-left">
-                  Status
-                </th>
+                <th className="px-5 py-3 text-left">User</th>
+                <th className="px-5 py-3 text-left">Role</th>
+                <th className="px-5 py-3 text-left">Reviews</th>
+                <th className="px-5 py-3 text-left">Joined</th>
+                <th className="px-5 py-3 text-left">Status</th>
                 <th className="px-5 py-3" />
               </tr>
             </thead>
@@ -233,19 +203,13 @@ export default function AdminUsersPage() {
             <tbody>
               {loading ? (
                 <tr>
-                  <td
-                    colSpan={6}
-                    className="py-10 text-center text-slate-500"
-                  >
+                  <td colSpan={6} className="py-10 text-center text-slate-500">
                     Loading users...
                   </td>
                 </tr>
               ) : filtered.length === 0 ? (
                 <tr>
-                  <td
-                    colSpan={6}
-                    className="py-10 text-center text-slate-500"
-                  >
+                  <td colSpan={6} className="py-10 text-center text-slate-500">
                     No users found.
                   </td>
                 </tr>
@@ -262,13 +226,8 @@ export default function AdminUsersPage() {
                         </div>
 
                         <div>
-                          <p className="text-slate-200">
-                            {u.full_name}
-                          </p>
-
-                          <p className="text-xs text-slate-500">
-                            {u.email}
-                          </p>
+                          <p className="text-slate-200">{u.full_name}</p>
+                          <p className="text-xs text-slate-500">{u.email}</p>
                         </div>
                       </div>
                     </td>
@@ -287,7 +246,6 @@ export default function AdminUsersPage() {
                         ) : (
                           <User size={11} />
                         )}
-
                         {u.role}
                       </button>
                     </td>
@@ -297,9 +255,7 @@ export default function AdminUsersPage() {
                     </td>
 
                     <td className="px-5 py-3 text-slate-400">
-                      {new Date(
-                        u.created_at
-                      ).toLocaleDateString()}
+                      {new Date(u.created_at).toLocaleDateString()}
                     </td>
 
                     <td className="px-5 py-3">
@@ -311,9 +267,7 @@ export default function AdminUsersPage() {
                             : 'border-slate-600/30 bg-slate-500/10 text-slate-500'
                         }`}
                       >
-                        {u.active
-                          ? 'Active'
-                          : 'Inactive'}
+                        {u.active ? 'Active' : 'Inactive'}
                       </button>
                     </td>
 

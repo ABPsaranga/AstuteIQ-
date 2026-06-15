@@ -423,6 +423,13 @@ export default function UserDashboardPage() {
             )}
           </div>
         </div>
+
+        //add footer here later
+        <footer className="px-5 py-4 border-t border-slate-800/40">
+          <p className="text-xs text-slate-600">
+            © 2023 Your Company. All rights reserved.
+          </p>
+        </footer>
       </div>
     </div>
   )

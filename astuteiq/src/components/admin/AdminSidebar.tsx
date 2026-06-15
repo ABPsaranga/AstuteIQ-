@@ -48,11 +48,11 @@ const NAV_SECTIONS: NavSection[] = [
     icon: LayoutDashboard,
     children: [
       { to: '/admin',                 label: 'Dashboard',    icon: LayoutDashboard },
-      { to: '/admin/run-review',      label: 'Run Review',   icon: PlayCircle      },
-      { to: '/admin/history',         label: 'History',      icon: Clock           },
-      { to: '/admin/analytics',       label: 'Analytics',    icon: BarChart2       },
-      { to: '/admin/soa-analysis',    label: 'SOA Analysis', icon: FileSearch      },
-      { to: '/admin/settings',        label: 'Settings',     icon: Settings        },
+      // { to: '/admin/run-review',      label: 'Run Review',   icon: PlayCircle      },
+      // { to: '/admin/history',         label: 'History',      icon: Clock           },
+      // { to: '/admin/analytics',       label: 'Analytics',    icon: BarChart2       },
+      //{ to: '/admin/soa-analysis',    label: 'SOA Analysis', icon: FileSearch      },
+      // { to: '/admin/settings',        label: 'Settings',     icon: Settings        },
     ],
   },
   {
@@ -73,6 +73,7 @@ const NAV_SECTIONS: NavSection[] = [
       { to: '/admin/users',       label: 'All users',   icon: Users                                       },
       { to: '/admin/invitations', label: 'Invitations', icon: UserPlus, badge: '3', badgeColor: 'violet' },
       { to: '/admin/permissions', label: 'Permissions', icon: Shield                                      },
+      { to: '/admin/settings',        label: 'Settings',     icon: Settings        },
     ],
   },
   {

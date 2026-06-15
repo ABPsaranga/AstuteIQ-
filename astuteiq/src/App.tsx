@@ -17,15 +17,15 @@ import HomePage from './pages/HomePage'
 
 import UserDashboardPage from './pages/UserDashboardPage'
 
-import AdminDashboardPage     from './pages/AdminDashboardPage'
-import AdminUsersPage         from './pages/AdminUsersPage'
-import AdminBillingPage       from './pages/AdminBillingPage'
-import AdminLogsPage          from './pages/AdminLogsPage'
-import AdminIntegrationsPage  from './pages/AdminIntegrationsPage'
-import AdminInvitationsPage   from './pages/AdminInvitationsPage'
-import AdminPermissionsPage   from './pages/AdminPermissionsPage'
-import AdminAuditLogsPage     from './pages/AdminAuditLogsPage'
-import AdminApiUsagePage      from './pages/AdminApiUsagePage'
+import AdminDashboardPage      from './pages/AdminDashboardPage'
+import AdminUsersPage          from './pages/AdminUsersPage'
+import AdminBillingPage        from './pages/AdminBillingPage'
+import AdminLogsPage           from './pages/AdminLogsPage'
+import AdminIntegrationsPage   from './pages/AdminIntegrationsPage'
+import AdminInvitationsPage    from './pages/AdminInvitationsPage'
+import AdminPermissionsPage    from './pages/AdminPermissionsPage'
+import AdminAuditLogsPage      from './pages/AdminAuditLogsPage'
+import AdminApiUsagePage       from './pages/AdminApiUsagePage'
 import AdminLiveMonitoringPage from './pages/AdminLiveMonitoringPage'
 
 import AnalyticsDashboard from './pages/AnalyticsDashboard'
@@ -34,6 +34,13 @@ import ReviewResultsPage  from './pages/ReviewResultsPage'
 import ReviewHistoryPage  from './pages/ReviewHistoryPage'
 import SOAAnalysisPage    from './pages/SOAAnalysisPage'
 import SettingsPage       from './pages/SettingsPage'
+
+import SupportPage       from './pages/SupportPage'
+import ASICRG175Page     from './pages/ASICRG175Page'
+import PrivacyPolicyPage from './pages/PrivacyPolicyPage'
+import TermsOfUsePage    from './pages/TermsOfUsePage'
+
+import ChatBot from './components/chat/ChatBot'
 
 export default function App() {
   return (
@@ -69,7 +76,6 @@ export default function App() {
         {/* ADMIN ROUTES */}
         <Route element={<ProtectedRoute roles={['admin']} />}>
           <Route element={<AdminLayout />}>
-            {/* Core admin pages */}
             <Route path="/admin"                  element={<AdminDashboardPage />} />
             <Route path="/admin/users"            element={<AdminUsersPage />} />
             <Route path="/admin/billing"          element={<AdminBillingPage />} />
@@ -81,7 +87,6 @@ export default function App() {
             <Route path="/admin/live-monitoring"  element={<AdminLiveMonitoringPage />} />
             <Route path="/admin/api-usage"        element={<AdminApiUsagePage />} />
 
-            {/* Workspace pages available to admin under /admin/* */}
             <Route path="/admin/run-review"       element={<RunReviewPage />} />
             <Route path="/admin/history"          element={<ReviewHistoryPage />} />
             <Route path="/admin/analytics"        element={<AnalyticsDashboard />} />
@@ -91,12 +96,20 @@ export default function App() {
           </Route>
         </Route>
 
-        <Route path="/asic-rg175p" element={<Navigate to="/" replace />} />
+        {/* PUBLIC PAGES */}
+        <Route path="/support"        element={<SupportPage />} />
+        <Route path="/asic-rg175"     element={<ASICRG175Page />} />
+        <Route path="/privacy-policy" element={<PrivacyPolicyPage />} />
+        <Route path="/terms-of-use"   element={<TermsOfUsePage />} />
 
         {/* FALLBACK */}
         <Route path="*" element={<Navigate to="/" replace />} />
 
       </Routes>
+
+      {/* Floating chat assistant — rendered outside Routes so it persists across all pages */}
+      <ChatBot />
+
     </BrowserRouter>
   )
 }

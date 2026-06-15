@@ -806,6 +806,14 @@ async function readFile(file: File, labelPrefix: string): Promise<UploadedDoc> {
    WORD EXPORT — matches document attached by user
 ============================================================================ */
 
+/* ============================================================================
+   WORD EXPORT — professional layout: cover page, TOC, header/footer with
+   page numbers, A4 page size, DXA-sized tables throughout.
+
+   Replace the existing `exportToWord` function in SOAAnalysisPage.tsx with
+   this version. No other changes to the file are required.
+============================================================================ */
+
 async function exportToWord(result: ReviewResult, overrides: Record<string, Override>) {
   try {
     const checks = result?.checks ?? []
@@ -814,6 +822,8 @@ async function exportToWord(result: ReviewResult, overrides: Record<string, Over
     const {
       Document, Packer, Paragraph, Table, TableRow, TableCell,
       TextRun, HeadingLevel, WidthType, BorderStyle, AlignmentType, ShadingType,
+      Header, Footer, PageNumber, PageBreak, TableOfContents,
+      TabStopType, TabStopPosition,
     } = await import('docx')
 
     const safeClient = (result.client_name || 'Review').replace(/[^\w\s-]/g,'').replace(/\s+/g,'_')
@@ -824,59 +834,116 @@ async function exportToWord(result: ReviewResult, overrides: Record<string, Over
     const na      = effectiveChecks.filter(c => c.status === 'na').length
     const overrideCount = Object.keys(overrides).length
 
+    // ── PAGE / LAYOUT CONSTANTS ─────────────────────────────────────────────
+    // A4 page, 1" margins → content width = 11906 - 1440 - 1440 = 9026 DXA
+    const PAGE_WIDTH       = 11906
+    const PAGE_HEIGHT      = 16838
+    const MARGIN           = 1440
+    const CONTENT_WIDTH    = PAGE_WIDTH - MARGIN * 2 // 9026
+
+    const BRAND_PURPLE  = '6B2FD9'
+    const BRAND_PURPLE_LIGHT = 'A78BFA'
+    const TEXT_DARK     = '1A1A2E'
+    const TEXT_MUTED    = '666688'
+
     const noBorder    = { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' }
     const cellBorders = { top: noBorder, bottom: noBorder, left: noBorder, right: noBorder }
     const rowBorder   = { style: BorderStyle.SINGLE, size: 4, color: 'E8E8F0' }
     const rowBorders  = { top: rowBorder, bottom: rowBorder, left: rowBorder, right: rowBorder }
+    const cellMargins = { top: 100, bottom: 100, left: 140, right: 140 }
 
     const STATUS_COLOURS: Record<string, string> = { pass:'1A7A45', fail:'B02020', warning:'9A5A00', na:'7070A0' }
     const STATUS_BG:      Record<string, string> = { pass:'EDFAF3', fail:'FFF0F0', warning:'FFF8EC', na:'F4F4F8' }
 
-    function makeScoreCell(label: string, value: number, key: string) {
+    // ── HEADER / FOOTER ──────────────────────────────────────────────────
+    const docHeader = new Header({
+      children: [
+        new Paragraph({
+          tabStops: [{ type: TabStopType.RIGHT, position: TabStopPosition.MAX }],
+          border: { bottom: { style: BorderStyle.SINGLE, size: 6, color: BRAND_PURPLE, space: 4 } },
+          children: [
+            new TextRun({ text: 'AstuteIQ', bold: true, size: 18, color: BRAND_PURPLE }),
+            new TextRun({ text: '  SOA Compliance Review', size: 18, color: TEXT_MUTED }),
+            new TextRun({ text: `\t${result.client_name || 'Client'}`, size: 18, color: TEXT_MUTED }),
+          ],
+        }),
+      ],
+    })
+
+    const docFooter = new Footer({
+      children: [
+        new Paragraph({
+          tabStops: [{ type: TabStopType.RIGHT, position: TabStopPosition.MAX }],
+          border: { top: { style: BorderStyle.SINGLE, size: 4, color: 'E0E0EC', space: 4 } },
+          children: [
+            new TextRun({ text: 'Confidential — For internal use only', size: 16, color: TEXT_MUTED }),
+            new TextRun({ text: '\tPage ', size: 16, color: TEXT_MUTED }),
+            new TextRun({ children: [PageNumber.CURRENT], size: 16, color: TEXT_MUTED }),
+            new TextRun({ text: ' of ', size: 16, color: TEXT_MUTED }),
+            new TextRun({ children: [PageNumber.TOTAL_PAGES], size: 16, color: TEXT_MUTED }),
+          ],
+        }),
+      ],
+    })
+
+    // ── HELPER CELL BUILDERS ────────────────────────────────────────────────
+    function makeScoreCell(label: string, value: number, key: string, width: number) {
       return new TableCell({
-        shading: { fill: STATUS_BG[key]||'F4F4F8', type: ShadingType.CLEAR },
+        shading: { fill: STATUS_BG[key] || 'F4F4F8', type: ShadingType.CLEAR },
         borders: cellBorders,
-        margins: { top:120, bottom:120, left:140, right:140 },
+        width: { size: width, type: WidthType.DXA },
+        margins: cellMargins,
         children: [
-          new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: String(value), bold:true, size:48, color: STATUS_COLOURS[key]||'666688' })] }),
-          new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: label, bold:true, size:16, color: STATUS_COLOURS[key]||'666688' })] }),
+          new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: String(value), bold: true, size: 48, color: STATUS_COLOURS[key] || '666688' })] }),
+          new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: label, bold: true, size: 16, color: STATUS_COLOURS[key] || '666688' })] }),
         ],
       })
     }
 
-    function makeHeaderCell(text: string, pct: number) {
+    function makeHeaderCell(text: string, width: number) {
       return new TableCell({
-        shading: { fill:'0F0F1A', type: ShadingType.CLEAR },
+        shading: { fill: '0F0F1A', type: ShadingType.CLEAR },
         borders: cellBorders,
-        width: { size: pct, type: WidthType.PERCENTAGE },
-        children: [new Paragraph({ children: [new TextRun({ text, bold:true, color:'FFFFFF', size:18 })] })],
+        width: { size: width, type: WidthType.DXA },
+        margins: cellMargins,
+        children: [new Paragraph({ children: [new TextRun({ text, bold: true, color: 'FFFFFF', size: 18 })] })],
       })
     }
+
+    // Findings table column widths (sum = CONTENT_WIDTH)
+    const FINDING_COL_WIDTHS = [2257, 1354, 5415]
 
     function makeFindingRow(check: any) {
       const ov = overrides[check.id]
       const effectiveStatus = ov?.newStatus ?? check.status
-      const noteRuns: InstanceType<typeof TextRun>[] = [new TextRun({ text: check.note || '—', size:18 })]
+      const noteRuns: InstanceType<typeof TextRun>[] = [new TextRun({ text: check.note || '—', size: 18 })]
       if (ov) {
-        noteRuns.push(new TextRun({ text: '\n\n[REVIEWER FLAGGED AS INCORRECT]', bold:true, color:'9A5A00', size:18 }))
+        noteRuns.push(new TextRun({ text: '\n\n[REVIEWER FLAGGED AS INCORRECT]', bold: true, color: '9A5A00', size: 18 }))
         if (ov.newStatus !== ov.originalStatus)
-          noteRuns.push(new TextRun({ text: `\nOverridden: ${ov.originalStatus.toUpperCase()} → ${ov.newStatus.toUpperCase()}`, bold:true, color:'9A5A00', size:18 }))
+          noteRuns.push(new TextRun({ text: `\nOverridden: ${ov.originalStatus.toUpperCase()} → ${ov.newStatus.toUpperCase()}`, bold: true, color: '9A5A00', size: 18 }))
         if (ov.comment)
-          noteRuns.push(new TextRun({ text: `\nReviewer Comment: ${ov.comment}`, italics:true, color:'9A5A00', size:18 }))
+          noteRuns.push(new TextRun({ text: `\nReviewer Comment: ${ov.comment}`, italics: true, color: '9A5A00', size: 18 }))
       }
-      return new TableRow({ children: [
-        new TableCell({ borders: rowBorders, width:{ size:25, type:WidthType.PERCENTAGE }, children:[
-          new Paragraph({ children:[new TextRun({ text: check.label||'—', bold:true, size:18 })] })
-        ]}),
-        new TableCell({ borders: rowBorders, width:{ size:15, type:WidthType.PERCENTAGE }, children:[
-          new Paragraph({ children:[new TextRun({ text: effectiveStatus.toUpperCase(), bold:true, size:18, color: STATUS_COLOURS[effectiveStatus]||'666688' })] })
-        ]}),
-        new TableCell({ borders: rowBorders, width:{ size:60, type:WidthType.PERCENTAGE }, children:[
-          new Paragraph({ children: noteRuns })
-        ]}),
-      ]})
+      return new TableRow({
+        children: [
+          new TableCell({
+            borders: rowBorders, width: { size: FINDING_COL_WIDTHS[0], type: WidthType.DXA }, margins: cellMargins,
+            children: [new Paragraph({ children: [new TextRun({ text: check.label || '—', bold: true, size: 18 })] })],
+          }),
+          new TableCell({
+            borders: rowBorders, width: { size: FINDING_COL_WIDTHS[1], type: WidthType.DXA }, margins: cellMargins,
+            shading: { fill: STATUS_BG[effectiveStatus] || 'F4F4F8', type: ShadingType.CLEAR },
+            children: [new Paragraph({ children: [new TextRun({ text: (effectiveStatus === 'na' ? 'N/A' : effectiveStatus).toUpperCase(), bold: true, size: 18, color: STATUS_COLOURS[effectiveStatus] || '666688' })] })],
+          }),
+          new TableCell({
+            borders: rowBorders, width: { size: FINDING_COL_WIDTHS[2], type: WidthType.DXA }, margins: cellMargins,
+            children: [new Paragraph({ children: noteRuns })],
+          }),
+        ],
+      })
     }
 
+    // ── GROUP CHECKS BY AREA ────────────────────────────────────────────────
     const grouped: Record<string, typeof effectiveChecks> = {}
     effectiveChecks.forEach(c => {
       const area = normaliseArea(c.area) || 'general'
@@ -885,115 +952,187 @@ async function exportToWord(result: ReviewResult, overrides: Record<string, Over
     })
 
     const findingsSections: any[] = []
-    AREA_ORDER.forEach(area => {
+    const allAreas = [...AREA_ORDER.filter(a => grouped[a]?.length), ...Object.keys(grouped).filter(a => !AREA_ORDER.includes(a))]
+
+    allAreas.forEach((area, idx) => {
       const areaChecks = grouped[area]
       if (!areaChecks?.length) return
       findingsSections.push(
-        new Paragraph({ text: AREA_LABELS[area] || area.toUpperCase(), heading: HeadingLevel.HEADING_2, spacing:{ before:300, after:100 } }),
+        new Paragraph({
+          text: AREA_LABELS[area] || area.toUpperCase(),
+          heading: HeadingLevel.HEADING_2,
+          spacing: { before: idx === 0 ? 0 : 320, after: 120 },
+          pageBreakBefore: idx > 0,
+        }),
         new Table({
-          width:{ size:100, type:WidthType.PERCENTAGE },
-          rows:[
-            new TableRow({ tableHeader:true, children:[makeHeaderCell('Finding',25), makeHeaderCell('Status',15), makeHeaderCell('Notes',60)] }),
+          width: { size: CONTENT_WIDTH, type: WidthType.DXA },
+          columnWidths: FINDING_COL_WIDTHS,
+          rows: [
+            new TableRow({ tableHeader: true, children: [makeHeaderCell('Finding', FINDING_COL_WIDTHS[0]), makeHeaderCell('Status', FINDING_COL_WIDTHS[1]), makeHeaderCell('Notes', FINDING_COL_WIDTHS[2])] }),
             ...areaChecks.map(makeFindingRow),
           ],
         }),
-        new Paragraph({ text:'' }),
-      )
-    })
-    Object.entries(grouped).forEach(([area, areaChecks]) => {
-      if (AREA_ORDER.includes(area)) return
-      findingsSections.push(
-        new Paragraph({ text: area.toUpperCase(), heading: HeadingLevel.HEADING_2, spacing:{ before:300, after:100 } }),
-        new Table({
-          width:{ size:100, type:WidthType.PERCENTAGE },
-          rows:[
-            new TableRow({ tableHeader:true, children:[makeHeaderCell('Finding',25), makeHeaderCell('Status',15), makeHeaderCell('Notes',60)] }),
-            ...areaChecks.map(makeFindingRow),
-          ],
-        }),
-        new Paragraph({ text:'' }),
+        new Paragraph({ text: '' }),
       )
     })
 
+    // ── SUMMARY PARAGRAPHS ──────────────────────────────────────────────────
     const summaryText = result.summary || ''
-    const summaryLabels = ['CONSISTENCY:','STRUCTURE:','PERSONALISATION:','COMPLIANCE:']
-    const summaryColours: Record<string,string> = { 'CONSISTENCY:':'B02020','STRUCTURE:':'2A2A3C','PERSONALISATION:':'9A5A00','COMPLIANCE:':'6B2FD9' }
+    const summaryLabels = ['CONSISTENCY:', 'STRUCTURE:', 'PERSONALISATION:', 'COMPLIANCE:']
+    const summaryColours: Record<string, string> = { 'CONSISTENCY:': 'B02020', 'STRUCTURE:': '2A2A3C', 'PERSONALISATION:': '9A5A00', 'COMPLIANCE:': BRAND_PURPLE }
     const summaryParagraphs: any[] = []
     summaryLabels.forEach((label, idx) => {
       const start = summaryText.indexOf(label); if (start === -1) return
-      const nextPositions = summaryLabels.slice(idx+1).map(l => summaryText.indexOf(l, start+1)).filter(p => p > -1)
+      const nextPositions = summaryLabels.slice(idx + 1).map(l => summaryText.indexOf(l, start + 1)).filter(p => p > -1)
       const end = nextPositions.length ? Math.min(...nextPositions) : summaryText.length
       const sText = summaryText.slice(start, end).trim()
       if (!sText) return
       summaryParagraphs.push(new Paragraph({
-        spacing:{ before: idx===0?0:120, after:40 },
-        border:{ left:{ style:BorderStyle.SINGLE, size:12, color: summaryColours[label]||'6B2FD9' } },
-        indent:{ left:200 },
-        children:[
-          new TextRun({ text: label+' ', bold:true, size:20, color: summaryColours[label]||'6B2FD9' }),
-          new TextRun({ text: sText.replace(label,'').trim(), size:20, color:'2A2A3C' }),
+        spacing: { before: idx === 0 ? 0 : 120, after: 40 },
+        border: { left: { style: BorderStyle.SINGLE, size: 12, color: summaryColours[label] || BRAND_PURPLE } },
+        indent: { left: 200 },
+        children: [
+          new TextRun({ text: label + ' ', bold: true, size: 20, color: summaryColours[label] || BRAND_PURPLE }),
+          new TextRun({ text: sText.replace(label, '').trim(), size: 20, color: TEXT_DARK }),
         ],
       }))
     })
     if (summaryParagraphs.length === 0 && summaryText)
       summaryParagraphs.push(new Paragraph({
-        border:{ left:{ style:BorderStyle.SINGLE, size:12, color:'6B2FD9' } }, indent:{ left:200 },
-        children:[new TextRun({ text: summaryText, size:20, color:'2A2A3C' })],
+        border: { left: { style: BorderStyle.SINGLE, size: 12, color: BRAND_PURPLE } }, indent: { left: 200 },
+        children: [new TextRun({ text: summaryText, size: 20, color: TEXT_DARK })],
       }))
 
-    const today = new Date().toLocaleDateString('en-AU', { day:'2-digit', month:'long', year:'numeric' })
+    const today = new Date().toLocaleDateString('en-AU', { day: '2-digit', month: 'long', year: 'numeric' })
 
-    const doc = new Document({ sections:[{ children:[
-      new Paragraph({ text:'AstuteIQ', heading:HeadingLevel.TITLE, spacing:{ after:120 } }),
-      new Paragraph({ text:'SOA Compliance Review Report', heading:HeadingLevel.HEADING_1, spacing:{ after:300 } }),
+    // ── COVER PAGE ──────────────────────────────────────────────────────────
+    const COVER_COL_WIDTHS = [Math.round(CONTENT_WIDTH * 0.3), CONTENT_WIDTH - Math.round(CONTENT_WIDTH * 0.3)]
 
-      new Table({
-        width:{ size:100, type:WidthType.PERCENTAGE },
-        rows: [
-          ['Client', result.client_name],
-          ['Adviser', result.adviser_name],
-          ['Practice', result.practice_name],
-          ['Advice Type', result.advice_type],
-          ['Date', result.date],
-          ['Risk Level', result.risk_level],
-          ['Documents Reviewed', (result.docs_reviewed||[]).join(', ')||'SOA'],
-          ['Review Mode', result.mode === 'quick' ? 'Quick Check' : 'Full Review'],
-        ].map(([k,v]) => new TableRow({ children:[
-          new TableCell({ borders: cellBorders, width:{ size:30, type:WidthType.PERCENTAGE }, children:[new Paragraph({ children:[new TextRun({ text:k, bold:true, size:18, color:'666688' })] })] }),
-          new TableCell({ borders: cellBorders, width:{ size:70, type:WidthType.PERCENTAGE }, children:[new Paragraph({ children:[new TextRun({ text:String(v||'—'), size:18 })] })] }),
-        ]})),
-      }),
+    const coverInfoRows = [
+      ['Client', result.client_name],
+      ['Adviser', result.adviser_name],
+      ['Practice', result.practice_name],
+      ['Advice Type', result.advice_type],
+      ['SOA Date', result.date],
+      ['Risk Level', result.risk_level],
+      ['Documents Reviewed', (result.docs_reviewed || []).join(', ') || 'SOA'],
+      ['Review Mode', result.mode === 'quick' ? 'Quick Check' : 'Full Review'],
+      ['Report Generated', today],
+    ].map(([k, v]) => new TableRow({
+      children: [
+        new TableCell({ borders: cellBorders, width: { size: COVER_COL_WIDTHS[0], type: WidthType.DXA }, margins: cellMargins, children: [new Paragraph({ children: [new TextRun({ text: k, bold: true, size: 20, color: TEXT_MUTED })] })] }),
+        new TableCell({ borders: cellBorders, width: { size: COVER_COL_WIDTHS[1], type: WidthType.DXA }, margins: cellMargins, children: [new Paragraph({ children: [new TextRun({ text: String(v || '—'), size: 20, color: TEXT_DARK })] })] }),
+      ],
+    }))
 
-      new Paragraph({ text:'', spacing:{ after:200 } }),
-      new Paragraph({ text:'Score Summary', heading:HeadingLevel.HEADING_1, spacing:{ before:280, after:80 } }),
-      new Table({
-        width:{ size:100, type:WidthType.PERCENTAGE },
-        rows:[new TableRow({ children:[makeScoreCell('PASS',pass,'pass'), makeScoreCell('WARNING',warning,'warning'), makeScoreCell('FAIL',fail,'fail'), makeScoreCell('N/A',na,'na')] })],
-      }),
+    // ── SCORE SUMMARY TABLE ─────────────────────────────────────────────────
+    const scoreColWidth = Math.round(CONTENT_WIDTH / 4)
+    const scoreColWidths = [scoreColWidth, scoreColWidth, scoreColWidth, CONTENT_WIDTH - scoreColWidth * 3]
 
-      new Paragraph({ text:'Overall Assessment', heading:HeadingLevel.HEADING_1, spacing:{ before:280, after:80 } }),
-      ...summaryParagraphs,
-      new Paragraph({ text:'' }),
+    // ── DOCUMENT ────────────────────────────────────────────────────────────
+    const doc = new Document({
+      styles: {
+        default: {
+          document: { run: { font: 'Arial', size: 22, color: TEXT_DARK } },
+        },
+        paragraphStyles: [
+          {
+            id: 'Title', name: 'Title', basedOn: 'Normal', next: 'Normal', quickFormat: true,
+            run: { size: 56, bold: true, font: 'Arial', color: TEXT_DARK },
+            paragraph: { spacing: { before: 0, after: 80 } },
+          },
+          {
+            id: 'Heading1', name: 'Heading 1', basedOn: 'Normal', next: 'Normal', quickFormat: true,
+            run: { size: 32, bold: true, font: 'Arial', color: TEXT_DARK },
+            paragraph: { spacing: { before: 320, after: 160 }, outlineLevel: 0,
+              border: { bottom: { style: BorderStyle.SINGLE, size: 6, color: BRAND_PURPLE, space: 4 } } },
+          },
+          {
+            id: 'Heading2', name: 'Heading 2', basedOn: 'Normal', next: 'Normal', quickFormat: true,
+            run: { size: 26, bold: true, font: 'Arial', color: BRAND_PURPLE },
+            paragraph: { spacing: { before: 240, after: 120 }, outlineLevel: 1 },
+          },
+        ],
+      },
+      sections: [{
+        properties: {
+          page: {
+            size: { width: PAGE_WIDTH, height: PAGE_HEIGHT },
+            margin: { top: MARGIN, right: MARGIN, bottom: MARGIN, left: MARGIN },
+          },
+        },
+        headers: { default: docHeader },
+        footers: { default: docFooter },
+        children: [
 
-      ...(overrideCount > 0 ? [
-        new Paragraph({ text:'Reviewer Feedback Summary', heading:HeadingLevel.HEADING_1, spacing:{ before:200, after:80 } }),
-        new Paragraph({ children:[new TextRun({ text:`${overrideCount} reviewer override(s) applied. See flagged rows in Detailed Findings below.`, size:18, color:'9A5A00', italics:true })], spacing:{ after:200 } }),
-      ] : []),
+          // ── COVER PAGE ──────────────────────────────────────────────────
+          new Paragraph({ spacing: { before: 1600 }, children: [] }),
+          new Paragraph({ style: 'Title', children: [
+            new TextRun({ text: 'Astute', color: TEXT_DARK }),
+            new TextRun({ text: 'IQ', color: BRAND_PURPLE }),
+          ] }),
+          new Paragraph({
+            spacing: { after: 400 },
+            children: [new TextRun({ text: 'SOA Compliance Review Report', size: 32, color: TEXT_MUTED })],
+          }),
+          new Table({
+            width: { size: CONTENT_WIDTH, type: WidthType.DXA },
+            columnWidths: COVER_COL_WIDTHS,
+            rows: coverInfoRows,
+          }),
+          new Paragraph({
+            spacing: { before: 600 },
+            children: [new TextRun({ text: 'AI-assisted review — all findings require human verification. FAIL and WARNING items must be reviewed in the original documents before the SOA is submitted.', italics: true, size: 18, color: 'B02020' })],
+          }),
+          new Paragraph({ children: [new PageBreak()] }),
 
-      new Paragraph({ text:'AI Disclaimer', heading:HeadingLevel.HEADING_1, spacing:{ before:200, after:80 } }),
-      new Paragraph({ children:[new TextRun({ text:'AI-assisted review — all findings require human verification. FAIL and WARNING items must be reviewed in the original documents before the SOA is submitted.', italics:true, size:18, color:'B02020' })], spacing:{ after:200 } }),
+          // ── TABLE OF CONTENTS ───────────────────────────────────────────
+          new Paragraph({ text: 'Table of Contents', heading: HeadingLevel.HEADING_1 }),
+          new TableOfContents('Table of Contents', { hyperlink: true, headingStyleRange: '1-2' }),
+          new Paragraph({ children: [new PageBreak()] }),
 
-      new Paragraph({ text:'Detailed Findings', heading:HeadingLevel.HEADING_1, spacing:{ before:200, after:80 } }),
-      ...findingsSections,
+          // ── SCORE SUMMARY ───────────────────────────────────────────────
+          new Paragraph({ text: 'Score Summary', heading: HeadingLevel.HEADING_1 }),
+          new Table({
+            width: { size: CONTENT_WIDTH, type: WidthType.DXA },
+            columnWidths: scoreColWidths,
+            rows: [new TableRow({ children: [
+              makeScoreCell('PASS', pass, 'pass', scoreColWidths[0]),
+              makeScoreCell('WARNING', warning, 'warning', scoreColWidths[1]),
+              makeScoreCell('FAIL', fail, 'fail', scoreColWidths[2]),
+              makeScoreCell('N/A', na, 'na', scoreColWidths[3]),
+            ] })],
+          }),
 
-      new Paragraph({ children:[new TextRun({ text:`Generated by AstuteIQ — ${today} — For internal use only`, size:16, color:'9090A8', italics:true })], spacing:{ before:400 } }),
-    ]}]})
+          // ── OVERALL ASSESSMENT ──────────────────────────────────────────
+          new Paragraph({ text: 'Overall Assessment', heading: HeadingLevel.HEADING_1 }),
+          ...summaryParagraphs,
+          new Paragraph({ text: '' }),
+
+          // ── REVIEWER FEEDBACK SUMMARY (if any) ───────────────────────────
+          ...(overrideCount > 0 ? [
+            new Paragraph({ text: 'Reviewer Feedback Summary', heading: HeadingLevel.HEADING_1 }),
+            new Paragraph({ children: [new TextRun({ text: `${overrideCount} reviewer override(s) applied. See flagged rows in Detailed Findings below.`, size: 18, color: '9A5A00', italics: true })], spacing: { after: 200 } }),
+          ] : []),
+
+          // ── DETAILED FINDINGS ───────────────────────────────────────────
+          new Paragraph({ text: 'Detailed Findings', heading: HeadingLevel.HEADING_1, pageBreakBefore: true }),
+          ...findingsSections,
+
+          // ── FOOTER NOTE ───────────────────────────────────────────────────
+          new Paragraph({
+            spacing: { before: 400 },
+            children: [new TextRun({ text: `Generated by AstuteIQ — ${today} — For internal use only`, size: 16, color: '9090A8', italics: true })],
+          }),
+        ],
+      }],
+    })
 
     const blob = await Packer.toBlob(doc)
     const url  = URL.createObjectURL(blob)
     const a    = document.createElement('a')
     a.href = url
-    a.download = `AstuteIQ_Compliance_${safeClient}_${new Date().toISOString().slice(0,10)}.docx`
+    a.download = `AstuteIQ_Compliance_${safeClient}_${new Date().toISOString().slice(0, 10)}.docx`
     document.body.appendChild(a); a.click(); document.body.removeChild(a)
     setTimeout(() => URL.revokeObjectURL(url), 1000)
   } catch (err: any) {
