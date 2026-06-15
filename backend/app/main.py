@@ -5,20 +5,18 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from dotenv import load_dotenv
 load_dotenv()
 
-
-
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-
-
+from fastapi.responses import JSONResponse
 
 from app.api.routes import (
     auth,
     reviews,
     soa,
     feedback,
-    admin,          # ← IMPORTANT
-    billing, 
+    admin,
+    billing,
+    assistant,
 )
 
 # ──────────────────────────────────────────────────────────────
@@ -58,12 +56,11 @@ origins = [
     "https://astute-iq-nsjv.vercel.app",
     "https://astute-iq-nsjv-4nplg0hlp-astuteiq.vercel.app",
     "https://astuteiq-oh8d9qf5n-astuteiq.vercel.app",
-    "https://vercel.com/astuteiq/astuteiq/6PqytTQqmL8WXXz2TzmJaWBfCuuN",
-    "https://astuteiq-bd54uetp2-astuteiq.vercel.app", # newly added on 2024-06-17
+    "https://astuteiq-bd54uetp2-astuteiq.vercel.app",
 
     # Custom domains
-    "https://astuteiq.io",
     "https://www.astuteiq.io",
+    "https://astuteiq.io",
 ]
 
 # ──────────────────────────────────────────────────────────────
@@ -74,18 +71,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
     allow_credentials=True,
-
-    # Allow every method
-    allow_methods=[
-        "GET",
-        "POST",
-        "PUT",
-        "PATCH",
-        "DELETE",
-        "OPTIONS",
-    ],
-
-    # Allow every header
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["*"],
     expose_headers=["*"],
 )
@@ -93,8 +79,6 @@ app.add_middleware(
 # ──────────────────────────────────────────────────────────────
 # Global OPTIONS preflight handler
 # ──────────────────────────────────────────────────────────────
-
-from fastapi.responses import JSONResponse
 
 @app.options("/{rest_of_path:path}")
 async def preflight_handler(rest_of_path: str):
@@ -104,47 +88,20 @@ async def preflight_handler(rest_of_path: str):
 # API Routes
 # ──────────────────────────────────────────────────────────────
 
-app.include_router(
-    auth.router,
-    prefix="/api",
-    tags=["Auth"],
-)
+app.include_router(auth.router,      prefix="/api",          tags=["Auth"])
+app.include_router(reviews.router,   prefix="/api/reviews",  tags=["Reviews"])
+app.include_router(soa.router,       prefix="/api",          tags=["SOA"])
+app.include_router(feedback.router,  prefix="/api",          tags=["Feedback"])
+app.include_router(admin.router,     prefix="/api",          tags=["Admin"])
+app.include_router(billing.router,   prefix="/api",          tags=["Billing"])
+app.include_router(assistant.router, prefix="/api",          tags=["Assistant"])
 
-app.include_router(
-    reviews.router,
-    prefix="/api/reviews",
-    tags=["Reviews"],
-)
-
-app.include_router(
-    soa.router,
-    prefix="/api",
-    tags=["SOA"],
-)
-
-app.include_router(
-    feedback.router,
-    prefix="/api",
-    tags=["Feedback"],
-)
-
-app.include_router(
-    admin.router,
-    prefix="/api",      # admin router already has prefix="/admin"
-    tags=["Admin"],
-)
-
-app.include_router(
-    billing.router,
-    prefix="/api",
-    tags=["Billing"],
-)
-
-# Final route becomes:
+# Route reference:
 # /api/admin/users
 # /api/admin/stats
 # /api/admin/permissions
 # /api/admin/invite
+# /api/assistant/chat
 
 # ──────────────────────────────────────────────────────────────
 # Health Endpoints
@@ -162,17 +119,8 @@ def root():
 def health():
     return {
         "status": "ok",
-        "anthropic_key_configured": bool(
-            os.getenv("ANTHROPIC_API_KEY")
-        ),
-        "supabase_url_configured": bool(
-            os.getenv("SUPABASE_URL")
-        ),
-        "supabase_service_role_configured": bool(
-            os.getenv("SUPABASE_SERVICE_ROLE_KEY")
-        ),
-        "supabase_anon_key_configured": bool(
-            os.getenv("SUPABASE_ANON_KEY")
-        ),
-
+        "anthropic_key_configured":        bool(os.getenv("ANTHROPIC_API_KEY")),
+        "supabase_url_configured":         bool(os.getenv("SUPABASE_URL")),
+        "supabase_service_role_configured": bool(os.getenv("SUPABASE_SERVICE_ROLE_KEY")),
+        "supabase_anon_key_configured":    bool(os.getenv("SUPABASE_ANON_KEY")),
     }
