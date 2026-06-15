@@ -4,21 +4,21 @@ Uses Supabase for persistence instead of JSON files.
 """
 import os
 import uuid
-import time
-from typing import Any, Optional, cast
+from typing import Optional
 from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from pydantic import BaseModel
 from app.core.deps import get_current_user
+# router = APIRouter()
+router = APIRouter(prefix="/reviews", tags=["Reviews"])
 
-router = APIRouter()
 
 # Supabase setup
 def get_supabase():
     try:
         from supabase import create_client
         url = os.getenv("SUPABASE_URL")
-        key = os.getenv("SUPABASE_SERVICE_KEY")
+        key = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
         if url and key:
             return create_client(url, key)
     except ImportError:
@@ -101,7 +101,15 @@ async def run_review(body: RunReviewPayload, user: dict = Depends(get_current_us
         "fileSize": file_data["size"],
         "mode": body.mode,
         "status": "complete",
-        "score": 75,  # Could calculate from checks
+        "score": calculate_score(
+            [
+                {
+                    "status": str(check.get("status", "")).upper()
+                }
+                for check in result.get("checks", [])
+                if isinstance(check, dict)
+            ]
+        ),  # Could calculate from checks
         "findings": [
             {
                 "checkId": check.get("id"),
@@ -117,14 +125,22 @@ async def run_review(body: RunReviewPayload, user: dict = Depends(get_current_us
             if isinstance(check, dict)
         ],
         "overrides": [],
-        "createdAt": datetime.utcnow().isoformat(),
-        "completedAt": datetime.utcnow().isoformat(),
+        "createdAt": datetime.now().isoformat(),
+        "completedAt": datetime.now().isoformat(),
         # Additional metadata from SOA result
         "clientName": result.get("client_name", file_data["filename"]),
         "adviserName": result.get("adviser_name"),
         "practiceName": result.get("practice_name"),
         "adviceType": result.get("advice_type"),
-        "riskLevel": result.get("risk_level"),
+        "riskLevel": calculate_risk(
+    [
+        {
+            "status": str(check.get("status", "")).upper()
+        }
+        for check in result.get("checks", [])
+        if isinstance(check, dict)
+    ]
+),
         "docsReviewed": result.get("docs_reviewed", []),
         "summary": result.get("summary")
     }
@@ -370,12 +386,27 @@ def submit_override(review_id: str, body: OverridePayload, user: dict = Depends(
                     "newStatus": body.newStatus,
                     "comment": body.comment,
                     "overriddenBy": user_id,
-                    "overriddenAt": datetime.utcnow().isoformat()
+                    "overriddenAt": datetime.now().isoformat()
                 }
                 current_overrides.append(new_override)
 
+                for finding in findings:
+                    if (
+                        isinstance(finding, dict)
+                        and finding.get("checkId") == body.checkId
+                    ):
+                        finding["status"] = body.newStatus
+                        finding["reviewerComment"] = body.comment
+                        break
+
                 # Update review
-                supabase.table("reviews").update({"overrides": current_overrides}).eq("id", review_id).execute()
+                supabase.table("reviews").update(
+                    {
+                        "overrides": current_overrides,
+                        "findings": findings,
+                        "updatedAt": datetime.now().isoformat(),
+                    }
+                ).eq("id", review_id).execute()
 
                 return {"message": "Override saved."}
         except Exception as e:
@@ -383,3 +414,124 @@ def submit_override(review_id: str, body: OverridePayload, user: dict = Depends(
 
     # Fallback
     return {"message": "Override saved (locally only)."}
+
+def calculate_score(findings):
+    total = len(findings)
+
+    if total == 0:
+        return 0
+
+    pass_count = len(
+        [f for f in findings if f.get("status") == "PASS"]
+    )
+
+    warn_count = len(
+        [f for f in findings if f.get("status") == "WARN"]
+    )
+
+    score = (
+        pass_count * 100 +
+        warn_count * 50
+    ) / total
+
+    return round(score)
+
+def calculate_risk(findings):
+    fails = len(
+        [f for f in findings if f.get("status") == "FAIL"]
+    )
+
+    warns = len(
+        [f for f in findings if f.get("status") == "WARN"]
+    )
+
+    if fails >= 3:
+        return "HIGH"
+
+    if fails > 0 or warns >= 3:
+        return "MEDIUM"
+
+    return "LOW"
+
+
+
+# ─────────────────────────────────────────────
+# UPDATE REVIEW
+# ─────────────────────────────────────────────
+
+class UpdateReviewPayload(BaseModel):
+    clientName: Optional[str] = None
+    adviserName: Optional[str] = None
+    practiceName: Optional[str] = None
+    adviceType: Optional[str] = None
+    summary: Optional[str] = None
+
+
+@router.put("/{review_id}")
+def update_review(
+    review_id: str,
+    body: UpdateReviewPayload,
+    user: dict = Depends(get_current_user),
+):
+    user_id = user.get("sub") or user.get("id")
+
+    supabase = get_supabase()
+    if not supabase:
+        raise HTTPException(500, "Database unavailable")
+
+    review = (
+        supabase.table("reviews")
+        .select("*")
+        .eq("id", review_id)
+        .eq("userId", user_id)
+        .execute()
+    )
+
+    if not review.data:
+        raise HTTPException(404, "Review not found")
+
+    update_data = {
+        k: v
+        for k, v in body.dict().items()
+        if v is not None
+    }
+
+    update_data["updatedAt"] = datetime.now().isoformat()
+
+    supabase.table("reviews").update(update_data).eq(
+        "id", review_id
+    ).execute()
+
+    return {"message": "Review updated"}
+
+# ─────────────────────────────────────────────
+# DELETE REVIEW
+# ─────────────────────────────────────────────
+
+@router.delete("/{review_id}")
+def delete_review(
+    review_id: str,
+    user: dict = Depends(get_current_user),
+):
+    user_id = user.get("sub") or user.get("id")
+
+    supabase = get_supabase()
+    if not supabase:
+        raise HTTPException(500, "Database unavailable")
+
+    review = (
+        supabase.table("reviews")
+        .select("id")
+        .eq("id", review_id)
+        .eq("userId", user_id)
+        .execute()
+    )
+
+    if not review.data:
+        raise HTTPException(404, "Review not found")
+
+    supabase.table("reviews").delete().eq(
+        "id", review_id
+    ).execute()
+
+    return {"message": "Review deleted"}
